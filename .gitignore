@@ -1,0 +1,33 @@
+# env / secrets
+.env
+.env.*
+
+# pixi
+.pixi/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# data / output (large files, generated artifacts)
+*.zip
+*.fits
+*.fit
