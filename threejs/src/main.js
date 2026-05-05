@@ -5,10 +5,17 @@ import { LookingGlassWebXRPolyfill, LookingGlassConfig } from "@lookingglass/web
 import { buildStarfield, buildNebula } from "./starfield.js";
 
 // --- Looking Glass config (must happen before renderer is created) ---
+// targetX/Y/Z = focal point (where LG camera LOOKS AT), not camera position.
+// LG camera auto-placed at: (targetX, targetY, targetZ + u)
+//   where u = 0.5 * targetDiam / tan(0.5 * fovy)
+// Near clip plane = targetDiam units in front of focal point.
 const lgConfig = LookingGlassConfig;
-lgConfig.targetY = 0;          // orbit centre depth
-lgConfig.targetDiam = 3000;    // scene diameter in scene units
-lgConfig.fovy = (25 * Math.PI) / 180;
+lgConfig.targetX = 80;                           // focal point at scene centre
+lgConfig.targetY = 0;                           // focal point at scene centre
+lgConfig.targetZ = -0.5;                           // focal plane at nebula (z=0); default is -0.5 — must override
+lgConfig.targetDiam = 2400;                     // scene height at focal plane; also sets near clip = 2400 units in front of z=0
+lgConfig.fovy = 0.02;           // LG cam distance u = 1200/tan(12.5°) ≈ 5413 units
+lgConfig.depthiness = 1;                     // default value — preserves relative depth ratios from log10(d_pc)
 new LookingGlassWebXRPolyfill();
 
 // --- Renderer ---
@@ -23,12 +30,11 @@ const vrBtn = VRButton.createButton(renderer);
 document.getElementById("vr-button").appendChild(vrBtn);
 
 // ---------------------------------------------------------------------------
-// Camera config — edit these values to reposition the viewpoint
-// Coordinate system: X=right, Y=up, Z=toward viewer (standard Three.js)
-// Background plane sits at z=0; nearby stars have positive z (closer to camera)
-const CAMERA_Z      = 2000;    // distance in front of background plane
-const CAMERA_FOV    = 50;      // degrees
-const CAMERA_TARGET = new THREE.Vector3(0, 0, 0);  // image centre, bg depth
+// Desktop preview camera — independent of LG config, only affects browser view.
+// Set Z ≈ LG cam distance (u≈5413) so preview perspective matches hologram.
+const CAMERA_Z      = 5500;
+const CAMERA_FOV    = 25;
+const CAMERA_TARGET = new THREE.Vector3(0, 0, 0);
 // ---------------------------------------------------------------------------
 
 const scene = new THREE.Scene();
@@ -46,7 +52,7 @@ camera.lookAt(CAMERA_TARGET);
 // --- Orbit controls (desktop navigation) ---
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.copy(CAMERA_TARGET);
-controls.enableRotate = false;   // camera always faces straight into the scene
+controls.enableRotate = true;   // camera always faces straight into the scene
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.minDistance = 10;
