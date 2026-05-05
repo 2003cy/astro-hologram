@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Astro Hologram</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { background: #000; overflow: hidden; }
+      canvas { display: block; }
+      #vr-button {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        z-index: 100;
+      }
+      #info {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        color: #aaa;
+        font: 12px/1.6 monospace;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info">
+      Drag to orbit &nbsp;|&nbsp; Scroll to zoom<br/>
+      Click VR to open Looking Glass
+    </div>
+    <div id="vr-button"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
