@@ -51,3 +51,5 @@ export/
 *.fits
 *.fit
 *.fts
+*.png
+!test.png
