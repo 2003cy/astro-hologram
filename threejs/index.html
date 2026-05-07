@@ -22,12 +22,44 @@
         font: 12px/1.6 monospace;
         pointer-events: none;
       }
+      #controls {
+        position: fixed;
+        bottom: 24px;
+        left: 24px;
+        z-index: 100;
+        display: flex;
+        gap: 8px;
+      }
+      .ctrl-btn {
+        background: rgba(255,255,255,0.07);
+        color: #999;
+        border: 1px solid rgba(255,255,255,0.14);
+        padding: 6px 16px;
+        font: 12px/1.4 monospace;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+        user-select: none;
+      }
+      .ctrl-btn:hover {
+        background: rgba(255,255,255,0.14);
+        color: #ddd;
+      }
+      .ctrl-btn.active {
+        background: rgba(255,255,255,0.20);
+        color: #fff;
+        border-color: rgba(255,255,255,0.38);
+      }
     </style>
   </head>
   <body>
     <div id="info">
       Drag to orbit &nbsp;|&nbsp; Scroll to zoom<br/>
       Click VR to open Looking Glass
+    </div>
+    <div id="controls">
+      <button class="ctrl-btn active" id="btn-stars">Stars</button>
+      <button class="ctrl-btn" id="btn-nebula3d">3D Nebula</button>
     </div>
     <div id="vr-button"></div>
     <script type="module" src="/src/main.js"></script>
