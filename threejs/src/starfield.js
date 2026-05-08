@@ -93,8 +93,11 @@ export async function buildNebulaRGBD(colorUrl, depthUrl, meta, sceneWidth,
     new Promise((res, rej) => loader.load(depthUrl, res, undefined, rej)),
   ]);
   colorTex.colorSpace = THREE.SRGBColorSpace;
-  // Disable mipmaps on depth texture so vertex shader sampling stays accurate
-  depthTex.minFilter = THREE.LinearFilter;
+  // Depth texture must stay linear — no sRGB gamma decode.
+  // Three.js r152+ defaults to SRGBColorSpace for PNG, which causes the GPU to
+  // apply d^2.2 decode when sampling, compressing the depth range by ~40-60%.
+  depthTex.colorSpace   = THREE.NoColorSpace;
+  depthTex.minFilter    = THREE.LinearFilter;
   depthTex.generateMipmaps = false;
 
   const geo = new THREE.PlaneGeometry(sceneWidth, sceneWidth, 512, 512);
@@ -105,7 +108,8 @@ export async function buildNebulaRGBD(colorUrl, depthUrl, meta, sceneWidth,
       uDepthMap:   { value: depthTex },
       uZOffset:    { value: zOffset },
       uDepthScale: { value: depthScale },
-      uOpacity:    { value: 0.8 },
+      uOpacity:    { value: 0.6 },
+      uBrightness: { value: 1.5 }, // compensates geometric dimming from vertex displacement
     },
     vertexShader: /* glsl */`
       uniform sampler2D uDepthMap;
@@ -123,10 +127,11 @@ export async function buildNebulaRGBD(colorUrl, depthUrl, meta, sceneWidth,
     fragmentShader: /* glsl */`
       uniform sampler2D uColorMap;
       uniform float uOpacity;
+      uniform float uBrightness;
       varying vec2 vUv;
       void main() {
         vec4 c = texture2D(uColorMap, vUv);
-        gl_FragColor = vec4(c.rgb * uOpacity, 1.0);
+        gl_FragColor = vec4(c.rgb * uBrightness, uOpacity);
       }
     `,
     transparent: true,
