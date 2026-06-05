@@ -1,0 +1,10 @@
+{
+  "transform": "log10",
+  "bg_dist_pc": 3162.2777,
+  "bg_z_scene": 0,
+  "depth_coeff": 0.1,
+  "no_parallax_dist_factor": 1.2,
+  "pixel_scale_arcsec": 2.697243,
+  "xy_mode": "raw",
+  "img_w": 3000
+}

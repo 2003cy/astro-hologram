@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { computeZ, computeXY } from "./distanceTransform.js";
 
 function loadImage(url) {
   return new Promise((resolve, reject) => {
@@ -10,11 +11,14 @@ function loadImage(url) {
 }
 
 /**
- * Loads stars.json + atlas image.
- * Each star gets its own CanvasTexture cropped from the atlas —
- * no UV offset tricks, no texture cloning.
+ * Loads stars.json + atlas image and builds a Three.js Group of sprites.
+ *
+ * @param {string} jsonUrl  - URL to stars.json
+ * @param {object} cfg      - scene_config.json contents (transform params)
+ * @returns {{ group, sprites, rawStars, meta }}
+ *   sprites and rawStars are parallel arrays; iterate both to update Z positions.
  */
-export async function buildStarfield(jsonUrl) {
+export async function buildStarfield(jsonUrl, cfg) {
   const resp = await fetch(jsonUrl);
   const data = await resp.json();
   const { meta, stars } = data;
@@ -22,13 +26,14 @@ export async function buildStarfield(jsonUrl) {
   const atlasUrl = new URL(meta.atlas, new URL(jsonUrl, location.href)).href;
   const atlasImage = await loadImage(atlasUrl);
 
-  const group = new THREE.Group();
+  const group   = new THREE.Group();
+  const sprites = [];
 
   for (const star of stars) {
     const { px_x, px_y, px_w, px_h } = star;
 
     const canvas = document.createElement("canvas");
-    canvas.width = px_w;
+    canvas.width  = px_w;
     canvas.height = px_h;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(atlasImage, px_x, px_y, px_w, px_h, 0, 0, px_w, px_h);
@@ -44,13 +49,15 @@ export async function buildStarfield(jsonUrl) {
     });
 
     const sprite = new THREE.Sprite(mat);
-    sprite.position.set(star.x, star.y, star.z);
+    const xy = computeXY(star.x, star.y, star.dist_pc, cfg);
+    sprite.position.set(xy.x, xy.y, computeZ(star.dist_pc, cfg));
     sprite.scale.set(px_w, px_h, 1);
 
     group.add(sprite);
+    sprites.push(sprite);
   }
 
-  return { group, meta };
+  return { group, sprites, rawStars: stars, meta };
 }
 
 /**
@@ -73,7 +80,7 @@ export async function buildNebula(nebulaUrl, meta, sceneWidth) {
 
   const mesh = new THREE.Mesh(geo, mat);
   // PlaneGeometry default: lies in XY plane, normal faces +Z toward camera — no rotation needed
-  mesh.position.set(0, 0, meta.bg_z_scene);
+  mesh.position.set(0, 0, meta.bg_z_scene ?? 0);
 
   return mesh;
 }
@@ -96,8 +103,8 @@ export async function buildNebulaRGBD(colorUrl, depthUrl, meta, sceneWidth,
   // Depth texture must stay linear — no sRGB gamma decode.
   // Three.js r152+ defaults to SRGBColorSpace for PNG, which causes the GPU to
   // apply d^2.2 decode when sampling, compressing the depth range by ~40-60%.
-  depthTex.colorSpace   = THREE.NoColorSpace;
-  depthTex.minFilter    = THREE.LinearFilter;
+  depthTex.colorSpace    = THREE.NoColorSpace;
+  depthTex.minFilter     = THREE.LinearFilter;
   depthTex.generateMipmaps = false;
 
   const geo = new THREE.PlaneGeometry(sceneWidth, sceneWidth, 512, 512);
