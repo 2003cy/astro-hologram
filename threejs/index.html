@@ -6,15 +6,54 @@
     <title>Astro Hologram</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      body { background: #000; overflow: hidden; }
+      body {
+        background: #000;
+        overflow: hidden;
+        font-family: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+      }
       canvas { display: block; }
+      [hidden] { display: none !important; }
+
+      #home-screen {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(48,76,112,0.22), transparent 36%),
+          linear-gradient(180deg, #070b12, #010205 70%);
+        color: #eef4ff;
+      }
+      .home-content {
+        display: grid;
+        justify-items: center;
+        gap: 22px;
+        text-align: center;
+      }
+      #btn-enter-scene {
+        padding: 11px 24px;
+        border: 1px solid rgba(183,216,255,0.35);
+        border-radius: 8px;
+        background: rgba(116,164,219,0.12);
+        color: #e7f2ff;
+        font: 13px/1.4 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+        letter-spacing: 0.05em;
+        cursor: pointer;
+      }
+      #btn-enter-scene:hover { background: rgba(116,164,219,0.22); }
+      #btn-enter-scene:disabled { cursor: wait; opacity: 0.65; }
+      #scene-screen {
+        position: fixed;
+        inset: 0;
+        background: #000;
+      }
 
       #info {
         position: fixed;
         top: 48px;
         left: 12px;
         color: #aaa;
-        font: 12px/1.6 monospace;
+        font: 12px/1.6 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
         pointer-events: none;
       }
 
@@ -33,7 +72,7 @@
         color: #999;
         border: 1px solid rgba(255,255,255,0.14);
         padding: 6px 16px;
-        font: 12px/1.4 monospace;
+        font: 12px/1.4 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
         cursor: pointer;
         border-radius: 4px;
         transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -49,23 +88,110 @@
         border-color: rgba(255,255,255,0.38);
       }
 
-      /* --- Depth transform panel (top-right) --- */
+      /* --- Collapsible scene-control drawer --- */
+      #menu-toggle {
+        position: fixed;
+        top: 14px;
+        right: 16px;
+        z-index: 120;
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-content: center;
+        gap: 5px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.18);
+        background: rgba(8,12,20,0.72);
+        backdrop-filter: blur(16px);
+        cursor: pointer;
+      }
+      #menu-toggle span {
+        display: block;
+        width: 20px;
+        height: 2px;
+        border-radius: 2px;
+        background: #d7e0ec;
+        transition: transform 0.2s, opacity 0.2s;
+      }
+      #menu-toggle[aria-expanded="true"] span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+      #menu-toggle[aria-expanded="true"] span:nth-child(2) { opacity: 0; }
+      #menu-toggle[aria-expanded="true"] span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
       #transform-panel {
         position: fixed;
-        top: 12px;
-        right: 12px;
-        z-index: 100;
-        background: rgba(0,0,0,0.55);
-        border: 1px solid rgba(255,255,255,0.12);
-        border-radius: 6px;
-        padding: 12px 16px;
-        font: 12px/1.8 monospace;
-        color: #aaa;
-        min-width: 230px;
+        top: 0;
+        right: 0;
+        z-index: 110;
+        width: min(380px, calc(100vw - 20px));
+        height: 100vh;
+        padding: 72px 18px 28px;
+        overflow-y: auto;
+        background: linear-gradient(180deg, rgba(14,19,29,0.94), rgba(4,7,13,0.91));
+        border-left: 1px solid rgba(255,255,255,0.13);
+        box-shadow: -18px 0 50px rgba(0,0,0,0.35);
+        backdrop-filter: blur(22px);
+        font: 12px/1.6 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+        color: #aab4c2;
         user-select: none;
+        transform: translateX(102%);
+        transition: transform 0.24s ease;
+      }
+      #transform-panel.open {
+        transform: translateX(0);
+      }
+      .drawer-heading {
+        color: #eef4ff;
+        font-size: 15px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .drawer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .drawer-actions {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .control-section {
+        margin-bottom: 10px;
+        overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 10px;
+        background: rgba(255,255,255,0.035);
+      }
+      .control-section > summary {
+        list-style: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 13px;
+        color: #dce5f1;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .control-section > summary::-webkit-details-marker { display: none; }
+      .control-section > summary::after {
+        content: "+";
+        color: #75849a;
+        font-size: 17px;
+        line-height: 1;
+      }
+      .control-section[open] > summary::after { content: "−"; }
+      .control-section[open] > summary {
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+      }
+      .section-content {
+        padding: 13px;
       }
       #transform-panel .panel-title {
-        color: #666;
+        color: #718097;
         font-size: 10px;
         letter-spacing: 0.08em;
         text-transform: uppercase;
@@ -73,8 +199,9 @@
       }
       #transform-panel .transform-row {
         display: flex;
+        flex-wrap: wrap;
         gap: 6px;
-        margin-bottom: 10px;
+        margin-bottom: 14px;
       }
       .param-row {
         display: flex;
@@ -104,18 +231,81 @@
         border: 1px solid rgba(255,255,255,0.15);
         border-radius: 3px;
         color: #ddd;
-        font: 12px/1.4 monospace;
+        font: 12px/1.4 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
         padding: 1px 4px;
         text-align: right;
       }
       #btn-reset {
-        margin-top: 10px;
-        width: 100%;
-        padding: 4px 0;
+        padding: 6px 10px;
+        flex-shrink: 0;
+      }
+      .camera-reset {
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-content: center;
+        padding: 0;
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 5px;
+        background: rgba(255,255,255,0.035);
+        color: #7f8da1;
+        font: 15px/1 "Segoe UI Symbol", "Segoe UI", sans-serif;
+        cursor: pointer;
+      }
+      .camera-reset:hover {
+        background: rgba(255,255,255,0.12);
+        color: #eef4ff;
+      }
+      .camera-north {
+        width: auto;
+        padding: 0 5px;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+      }
+      .panel-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 6px;
+        margin-bottom: 6px;
+      }
+      .panel-title-row .panel-title {
+        margin-bottom: 0 !important;
+      }
+      #grid-label-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 25;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .grid-edge-label {
+        position: absolute;
+        padding: 3px 8px 4px;
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 4px;
+        background: rgba(2,5,10,0.76);
+        box-shadow: 0 1px 5px rgba(0,0,0,0.55);
+        font: 14px/1.25 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+        white-space: nowrap;
+        transform: translate(-50%, -50%);
+        will-change: left, top;
+      }
+      @media (max-width: 600px) {
+        #transform-panel { width: calc(100vw - 12px); }
+        #controls { left: 12px; bottom: 14px; }
       }
     </style>
   </head>
   <body>
+    <main id="home-screen">
+      <div class="home-content">
+        <button id="btn-enter-scene" type="button">Enter 3D Scene</button>
+      </div>
+    </main>
+
+    <section id="scene-screen" hidden>
+    <div id="grid-label-layer" aria-hidden="true"></div>
     <div id="info">
       Drag to orbit &nbsp;|&nbsp; Scroll to zoom<br/>
       Click VR to open Looking Glass
@@ -124,66 +314,187 @@
     <!-- Scene toggles -->
     <div id="controls">
       <button class="ctrl-btn active" id="btn-stars">Stars</button>
-      <button class="ctrl-btn" id="btn-nebula3d">3D Nebula</button>
+      <button class="ctrl-btn active" id="btn-nebula3d">3D Nebula</button>
+      <button class="ctrl-btn active" id="btn-grid">RA/Dec Grid</button>
     </div>
 
-    <!-- Depth transform controls -->
-    <div id="transform-panel">
-      <div class="panel-title">Depth Transform</div>
+    <button id="menu-toggle" type="button" aria-label="Open scene controls"
+            aria-controls="transform-panel" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
 
-      <div class="transform-row">
-        <button class="ctrl-btn active" id="btn-log10">log10</button>
-        <button class="ctrl-btn"        id="btn-linear">linear</button>
+    <aside id="transform-panel" aria-hidden="true">
+      <div class="drawer-header">
+        <div class="drawer-heading">Scene Controls</div>
+        <div class="drawer-actions">
+          <button class="ctrl-btn" id="btn-exit-scene">Exit scene</button>
+          <button class="ctrl-btn" id="btn-reset">Reset defaults</button>
+        </div>
       </div>
 
-      <div class="panel-title" style="margin-top: 4px;">XY Position</div>
-      <div class="transform-row">
-        <button class="ctrl-btn" id="btn-xy-raw">observed</button>
-        <button class="ctrl-btn" id="btn-xy-corrected">corrected</button>
-      </div>
+      <details class="control-section" open>
+        <summary>Stars</summary>
+        <div class="section-content">
+          <div class="panel-title">Distance Transform</div>
+          <div class="transform-row">
+            <button class="ctrl-btn active" id="btn-log10">log10</button>
+            <button class="ctrl-btn" id="btn-linear">linear</button>
+          </div>
 
-      <div class="param-row">
-        <span class="param-label">bg dist (pc)</span>
-        <input type="range" id="slider-bg-dist"
-               min="500" max="10000" step="50" value="3162" />
-        <input type="number" id="input-bg-dist"
-               min="100" step="100" value="3162" />
-      </div>
+          <div class="panel-title">XY Position</div>
+          <div class="transform-row">
+            <button class="ctrl-btn" id="btn-xy-raw">observed</button>
+            <button class="ctrl-btn" id="btn-xy-corrected">corrected</button>
+          </div>
 
-      <div class="param-row">
-        <span class="param-label">depth coeff</span>
-        <input type="range" id="slider-depth-coef"
-               min="0.01" max="0.5" step="0.01" value="0.10" />
-        <input type="number" id="val-depth-coef"
-               min="0.01" max="0.5" step="0.01" value="0.10" />
-      </div>
+          <div class="param-row">
+            <span class="param-label">bg dist (pc)</span>
+            <input type="range" id="slider-bg-dist" min="500" max="10000" step="50" value="3162" />
+            <input type="number" id="input-bg-dist" min="100" step="100" value="3162" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">depth coeff</span>
+            <input type="range" id="slider-depth-coef" min="0.01" max="5" step="0.01" value="0.10" />
+            <input type="number" id="val-depth-coef" min="0.01" max="5" step="0.01" value="0.10" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">no-parallax</span>
+            <input type="range" id="slider-no-par" min="0.5" max="3.0" step="0.1" value="1.2" />
+            <input type="number" id="val-no-par" min="0.5" max="3.0" step="0.1" value="1.2" />
+          </div>
+        </div>
+      </details>
 
-      <div class="param-row">
-        <span class="param-label">no-parallax-starpos</span>
-        <input type="range" id="slider-no-par"
-               min="0.5" max="3.0" step="0.1" value="1.2" />
-        <input type="number" id="val-no-par"
-               min="0.5" max="3.0" step="0.1" value="1.2" />
-      </div>
+      <details class="control-section">
+        <summary>Nebula</summary>
+        <div class="section-content">
+          <div class="panel-title">Signal Transform</div>
+          <div class="transform-row" id="nebula-transform-row">
+            <button class="ctrl-btn" data-nebula-transform="linear">linear</button>
+            <button class="ctrl-btn" data-nebula-transform="sqrt">sqrt</button>
+            <button class="ctrl-btn" data-nebula-transform="cbrt">cbrt</button>
+            <button class="ctrl-btn active" data-nebula-transform="log">log</button>
+            <button class="ctrl-btn" data-nebula-transform="power2">power²</button>
+            <button class="ctrl-btn" data-nebula-transform="threshold">threshold</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">position</span>
+            <input type="range" id="slider-nebula-shift" min="-500" max="500" step="10" value="0" />
+            <input type="number" id="val-nebula-shift" min="-500" max="500" step="10" value="0" />
+          </div>
+        </div>
+      </details>
 
-      <div class="param-row">
-        <span class="param-label">nebula shift</span>
-        <input type="range" id="slider-nebula-shift"
-               min="-500" max="500" step="10" value="0" />
-        <input type="number" id="val-nebula-shift"
-               min="-500" max="500" step="10" value="0" />
-      </div>
+      <details class="control-section">
+        <summary>Grid</summary>
+        <div class="section-content">
+          <div class="panel-title">Appearance</div>
+          <div class="param-row">
+            <span class="param-label">line width</span>
+            <input type="range" id="slider-grid-width" min="0.5" max="10" step="0.05" value="1.55" />
+            <input type="number" id="val-grid-width" min="0.5" max="10" step="0.05" value="1.55" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">brightness</span>
+            <input type="range" id="slider-grid-brightness" min="0.25" max="2" step="0.05" value="1" />
+            <input type="number" id="val-grid-brightness" min="0.25" max="2" step="0.05" value="1" />
+          </div>
 
-      <div class="param-row">
-        <span class="param-label">scene shift</span>
-        <input type="range" id="slider-scene-shift"
-               min="-500" max="500" step="10" value="0" />
-        <input type="number" id="val-scene-shift"
-               min="-500" max="500" step="10" value="0" />
-      </div>
+          <div class="panel-title">Density</div>
+          <div class="param-row">
+            <span class="param-label">RA / Dec</span>
+            <input type="range" id="slider-grid-density" min="2" max="20" step="1" value="10" />
+            <input type="number" id="val-grid-density" min="2" max="20" step="1" value="10" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">dist shells</span>
+            <input type="range" id="slider-grid-shells" min="2" max="12" step="1" value="7" />
+            <input type="number" id="val-grid-shells" min="2" max="12" step="1" value="7" />
+          </div>
 
-      <button class="ctrl-btn" id="btn-reset">Reset defaults</button>
-    </div>
+          <div class="panel-title">Elements</div>
+          <div class="transform-row">
+            <button class="ctrl-btn active" id="btn-grid-labels">labels</button>
+            <button class="ctrl-btn active" id="btn-grid-sightlines">sightlines</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="control-section">
+        <summary>Scene</summary>
+        <div class="section-content">
+          <div class="param-row">
+            <span class="param-label">z shift</span>
+            <input type="range" id="slider-scene-shift" min="-500" max="500" step="10" value="0" />
+            <input type="number" id="val-scene-shift" min="-500" max="500" step="10" value="0" />
+          </div>
+        </div>
+      </details>
+
+      <details class="control-section">
+        <summary>Camera</summary>
+        <div class="section-content">
+          <div class="panel-title-row">
+            <div class="panel-title">Position</div>
+            <button class="camera-reset" id="btn-reset-camera-position" title="Reset position" aria-label="Reset camera position">↺</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">x</span>
+            <input type="range" id="slider-camera-x" min="-10000" max="10000" step="10" value="0" />
+            <input type="number" id="val-camera-x" step="10" value="0" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">y</span>
+            <input type="range" id="slider-camera-y" min="-10000" max="10000" step="10" value="0" />
+            <input type="number" id="val-camera-y" step="10" value="0" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">z</span>
+            <input type="range" id="slider-camera-z" min="-10000" max="10000" step="10" value="5500" />
+            <input type="number" id="val-camera-z" step="10" value="5500" />
+          </div>
+          <div class="panel-title-row">
+            <div class="panel-title">Rotation</div>
+            <button class="camera-reset camera-north" id="btn-camera-north" title="Align celestial north up" aria-label="Rotate camera roll to celestial north">N↑</button>
+            <button class="camera-reset" id="btn-reset-camera-rotation" title="Reset roll" aria-label="Reset camera roll">↺</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">roll</span>
+            <input type="range" id="slider-camera-roll" min="-180" max="180" step="1" value="0" />
+            <input type="number" id="val-camera-roll" min="-180" max="180" step="1" value="0" />
+          </div>
+          <div class="panel-title-row">
+            <div class="panel-title">Orbit Target</div>
+            <button class="camera-reset" id="btn-reset-camera-target" title="Reset target" aria-label="Reset orbit target">↺</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">target x</span>
+            <input type="range" id="slider-target-x" min="-5000" max="5000" step="10" value="0" />
+            <input type="number" id="val-target-x" step="10" value="0" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">target y</span>
+            <input type="range" id="slider-target-y" min="-5000" max="5000" step="10" value="0" />
+            <input type="number" id="val-target-y" step="10" value="0" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">target z</span>
+            <input type="range" id="slider-target-z" min="-5000" max="5000" step="10" value="0" />
+            <input type="number" id="val-target-z" step="10" value="0" />
+          </div>
+          <div class="panel-title-row">
+            <div class="panel-title">Lens</div>
+            <button class="camera-reset" id="btn-reset-camera-lens" title="Reset lens" aria-label="Reset camera lens">↺</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">FOV</span>
+            <input type="range" id="slider-camera-fov" min="5" max="90" step="1" value="25" />
+            <input type="number" id="val-camera-fov" min="5" max="90" step="1" value="25" />
+          </div>
+        </div>
+      </details>
+    </aside>
+    </section>
 
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -72,12 +72,18 @@ astro-hologram/
 │       └── starfield.js        #   sprite atlas loader, nebula plane
 │
 ├── test_platesolve.ipynb       # Step 1: solve image → FITS with WCS
-├── test_detection.ipynb        # Step 2: detect sources → matches.parquet
+├── test_detection.ipynb        # Step 2: detect sources → data/matches.parquet
 ├── distance_transform.ipynb    # Step 3: explore distance mappings (log10 chosen)
 ├── export_stars.ipynb          # Step 4: export sprite atlas + stars.json + nebula
+├── test_depth.ipynb            # Nebula preprocessing → linear signal + metadata
 │
-├── matches.parquet             # Cached crossmatch output (20,130 sources)
+├── data/                       # Images, astronomy data, and generated assets
+│   ├── test.PNG                #   source sky image
+│   ├── test_solved*.fits       #   solved, star-only, and nebula FITS data
+│   ├── matches.parquet         #   cached Gaia crossmatch output
+│   └── export/                 #   Three.js stars, nebula, and scene config
 ├── pixi.toml                   # Environment + tasks
+├── run-threejs.cmd             # Windows Three.js dev launcher
 └── .env                        # API keys (not committed)
 ```
 
@@ -94,8 +100,8 @@ pixi run lab   # or: pixi run notebook
 ```
 
 Outputs:
-- `test_solved.fits` — original image with WCS
-- `test_solved_star.fits` — star-only version (processed externally with StarNet)
+- `data/test_solved.fits` — original image with WCS
+- `data/test_solved_star.fits` — star-only version (processed externally with StarNet)
 
 The solver is accessed through the `platesolve` package:
 
@@ -120,10 +126,10 @@ catalog  = detector.detect(img, wcs=wcs)         # wcs must be 2D
 
 gaia_df  = query_gaia(ra, dec, radius=0.75)
 matches  = crossmatch(catalog, gaia_df, pixscale=2.697)
-matches.to_parquet("matches.parquet")
+matches.to_parquet("data/matches.parquet")
 ```
 
-`matches.parquet` columns: `x, y, flux, fwhm, fwhm_arcsec, ellipticity, is_stellar, ra, dec, sep_arcsec, gaia_matched, gaia_source_id, gaia_ra, gaia_dec, gaia_g_mag, gaia_parallax, gaia_pmra, gaia_pmdec`
+`data/matches.parquet` columns: `x, y, flux, fwhm, fwhm_arcsec, ellipticity, is_stellar, ra, dec, sep_arcsec, gaia_matched, gaia_source_id, gaia_ra, gaia_dec, gaia_g_mag, gaia_parallax, gaia_pmra, gaia_pmdec`
 
 Results for this field (M31 area, ~0.75° radius):
 - 20,130 detected sources
@@ -145,7 +151,7 @@ Z = −(y_pixel − img_cy)   (image bottom→top, north up)
 
 ### Step 4 — Export sprite atlas
 
-Open `export_stars.ipynb`. Extracts star cutouts from `test_solved_star.fits`, packs them into a sprite atlas, and writes the Three.js-ready assets.
+Open `export_stars.ipynb`. Extracts star cutouts from `data/test_solved_star.fits`, packs them into a sprite atlas, and writes the Three.js-ready assets.
 
 ```bash
 pixi run lab
@@ -159,7 +165,7 @@ Per-star cutout process:
 
 Atlas layout: `⌈√N⌉ × ⌈√N/⌈√N⌉⌉` grid, up to 16,384 stars.
 
-Outputs in `export/`:
+Outputs in `data/export/`:
 
 | File | Description |
 |------|-------------|
@@ -194,12 +200,14 @@ Outputs in `export/`:
 
 ```bash
 pixi run threejs-dev
-# installs npm packages + opens http://localhost:5173
+# installs npm packages + opens http://127.0.0.1:4173
 ```
 
 The Three.js scene:
 - **Stars** — one `THREE.Sprite` per star, atlas UV offset per sprite, size ∝ `flux^0.3`
-- **Nebula** — `PlaneGeometry` at `y = bg_y_scene` with nebula texture, additive blending
+- **Nebula preprocessing (Python)** — `test_depth.ipynb` fits/subtracts the background, isolates the nebula signal, smooths it, and exports `nebula_signal.png` plus histogram metadata
+- **Nebula depth (Three.js)** — the vertex shader transforms that signal at runtime; linear, sqrt, cbrt, log, power², and threshold mappings can be selected without re-exporting Python data
+- **Adaptive coordinate grid (Three.js)** — optional FK5/J2000 RA, Dec, and pc/kpc grid generated from the solved FITS TAN WCS; sightlines rebuild with the selected star distance and XY transforms
 - **Controls** — OrbitControls for mouse drag / scroll in browser
 - **Looking Glass** — `LookingGlassWebXRPolyfill` + `VRButton`; click the VR button, drag the popup to the Looking Glass display, double-click to go fullscreen
 

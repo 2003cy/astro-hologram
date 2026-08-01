@@ -14,7 +14,7 @@ function loadImage(url) {
  * Loads stars.json + atlas image and builds a Three.js Group of sprites.
  *
  * @param {string} jsonUrl  - URL to stars.json
- * @param {object} cfg      - scene_config.json contents (transform params)
+ * @param {object} cfg      - data/export/scene_config.json contents (transform params)
  * @returns {{ group, sprites, rawStars, meta }}
  *   sprites and rawStars are parallel arrays; iterate both to update Z positions.
  */
@@ -86,18 +86,16 @@ export async function buildNebula(nebulaUrl, meta, sceneWidth) {
 }
 
 /**
- * RGBD nebula: displaced PlaneGeometry where brightness drives Z depth.
- * Vertex shader sets absolute Z = zOffset + depth * depthScale.
- *   depth=0 (dark background) → zOffset       (back face of nebula)
- *   depth=1 (bright core)     → zOffset + depthScale  (front face)
- * Both zOffset and depthScale come from export/nebula_meta.json.
+ * RGBD nebula: displaced PlaneGeometry where a preprocessed signal drives Z.
+ * Python performs star/background separation and smoothing. The vertex shader
+ * applies the selected visual transform to that signal at render time.
  */
-export async function buildNebulaRGBD(colorUrl, depthUrl, meta, sceneWidth,
-                                       zOffset = 0, depthScale = 1) {
+export async function buildNebulaRGBD(colorUrl, signalUrl, meta, sceneWidth,
+                                       depthScale = 1) {
   const loader = new THREE.TextureLoader();
   const [colorTex, depthTex] = await Promise.all([
     new Promise((res, rej) => loader.load(colorUrl, res, undefined, rej)),
-    new Promise((res, rej) => loader.load(depthUrl, res, undefined, rej)),
+    new Promise((res, rej) => loader.load(signalUrl, res, undefined, rej)),
   ]);
   colorTex.colorSpace = THREE.SRGBColorSpace;
   // Depth texture must stay linear — no sRGB gamma decode.
@@ -112,22 +110,38 @@ export async function buildNebulaRGBD(colorUrl, depthUrl, meta, sceneWidth,
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       uColorMap:   { value: colorTex },
-      uDepthMap:   { value: depthTex },
-      uZOffset:    { value: zOffset },
+      uSignalMap:  { value: depthTex },
       uDepthScale: { value: depthScale },
+      uDepthCenter:{ value: 0 },
+      uZCenter:    { value: meta.bg_z_scene ?? 0 },
+      uTransform:  { value: 3 },
       uOpacity:    { value: 0.6 },
       uBrightness: { value: 1.5 }, // compensates geometric dimming from vertex displacement
     },
     vertexShader: /* glsl */`
-      uniform sampler2D uDepthMap;
-      uniform float uZOffset;
+      uniform sampler2D uSignalMap;
       uniform float uDepthScale;
+      uniform float uDepthCenter;
+      uniform float uZCenter;
+      uniform int uTransform;
       varying vec2 vUv;
+
+      float transformSignal(float x) {
+        x = clamp(x, 0.0, 1.0);
+        if (uTransform == 0) return x;
+        if (uTransform == 1) return sqrt(x);
+        if (uTransform == 2) return pow(x, 1.0 / 3.0);
+        if (uTransform == 3) return log(1.0 + 99.0 * x) / log(100.0);
+        if (uTransform == 4) return x * x;
+        return x > 0.05 ? x : 0.0;
+      }
+
       void main() {
         vUv = uv;
-        float d = texture2D(uDepthMap, uv).r;
+        float signal = texture2D(uSignalMap, uv).r;
+        float d = transformSignal(signal);
         vec3 pos = position;
-        pos.z = uZOffset + d * uDepthScale;
+        pos.z = uZCenter + (d - uDepthCenter) * uDepthScale;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
       }
     `,
