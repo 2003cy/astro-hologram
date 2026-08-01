@@ -1,55 +1,42 @@
-# Local environment / secrets
+# Local configuration and secrets
 .env
 .env.*
 !.env.example
 
-# Pixi
-.pixi/   
+# Project data
+/data/*
+!/data/test.PNG
 
-# Python
+# Pixi environments
+.pixi/
+
+# Python caches and build output
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .coverage
 htmlcov/
-dist/
 build/
+dist/
 
-# Jupyter
+# Jupyter checkpoints
 .ipynb_checkpoints/
-*/.ipynb_checkpoints/
 
-# Node / Vite
+# Node and Vite output
 node_modules/
-**/node_modules/
-threejs/dist/
 threejs/.vite/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# macOS
-.DS_Store
-.AppleDouble
-
-# Editors
+# Editor and operating-system files
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Generated data / large artifacts
-export/
-*.parquet
-*.zip
-*.fits
-*.fit
-*.fts
-*.png
-!test.png
+.DS_Store
+.AppleDouble
