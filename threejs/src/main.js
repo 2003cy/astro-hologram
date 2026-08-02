@@ -1,29 +1,28 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { VRButton } from "three/addons/webxr/VRButton.js";
-import { LookingGlassWebXRPolyfill, LookingGlassConfig } from "@lookingglass/webxr";
 import { buildStarfield, buildNebula, buildNebulaRGBD } from "./starfield.js";
 import { computeZ, computeXY } from "./distanceTransform.js";
 import { buildAdaptiveGrid } from "./adaptiveGrid.js";
+import { buildLkgCameraGrid } from "./lkgCameraGrid.js";
+import { createStarInteraction } from "./starInteraction.js";
 
 // --- Looking Glass config (must happen before renderer is created) ---
 // targetX/Y/Z = focal point (where LG camera LOOKS AT), not camera position.
 // LG camera auto-placed at: (targetX, targetY, targetZ + u)
 //   where u = 0.5 * targetDiam / tan(0.5 * fovy)
 // Near clip plane = targetDiam units in front of focal point.
-const lgConfig = LookingGlassConfig;
-lgConfig.targetX    = 80;
-lgConfig.targetY    = 0;
-lgConfig.targetZ    = -0.5;
-lgConfig.targetDiam = 2800;
-lgConfig.fovy       = 0.02;
-lgConfig.depthiness = 1;
-const initialLgTarget = {
-  x: lgConfig.targetX,
-  y: lgConfig.targetY,
-  z: lgConfig.targetZ,
-};
-new LookingGlassWebXRPolyfill();
+const INITIAL_LG_CONFIG = Object.freeze({
+  targetX: 80,
+  targetY: 0,
+  targetZ: -0.5,
+  targetDiam: 2800,
+  fovy: 0.19,
+  depthiness: 1,
+  trackballX: 0,
+  trackballY: 0,
+});
+let lookingGlass = null;
+let lgConfig = null;
 
 const homeScreen = document.getElementById("home-screen");
 const sceneScreen = document.getElementById("scene-screen");
@@ -33,13 +32,15 @@ let sceneActive = false;
 let sceneInitialized = false;
 let sceneInitPromise = null;
 
-// --- Renderer ---
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.xr.enabled = true;
-sceneScreen.prepend(renderer.domElement);
+// WebGL and Looking Glass are initialized on first entry, leaving the home
+// screen lightweight and avoiding an early navigator.xr override.
+let renderer = null;
+let vrBtn = null;
+let lgControlsCollapsed = true;
 const gridLabelLayer = document.getElementById("grid-label-layer");
+const lkgCameraLabelLayer = document.getElementById("lkg-camera-label-layer");
+let lkgCameraGrid = null;
+let starInteraction = null;
 
 // --- Collapsible scene-control drawer ---
 const menuToggle = document.getElementById("menu-toggle");
@@ -59,12 +60,129 @@ window.addEventListener("keydown", event => {
   if (event.key === "Escape") setControlPanelOpen(false);
 });
 
-const vrBtn = VRButton.createButton(renderer);
-vrBtn.style.top    = "12px";
-vrBtn.style.left   = "12px";
-vrBtn.style.bottom = "";
-vrBtn.style.right  = "";
-sceneScreen.appendChild(vrBtn);
+// Native <details> toggles are instantaneous. Keep their independent open
+// state, but animate the content height so each submenu rolls down naturally.
+const sectionAnimations = new WeakMap();
+for (const section of document.querySelectorAll(".control-section")) {
+  const summary = section.querySelector(":scope > summary");
+  const content = section.querySelector(":scope > .section-content");
+  if (!summary || !content) continue;
+
+  section.dataset.expanded = String(section.open);
+  summary.addEventListener("click", event => {
+    event.preventDefault();
+
+    const opening = section.dataset.expanded !== "true";
+    section.dataset.expanded = String(opening);
+
+    const previousAnimation = sectionAnimations.get(section);
+    const wasOpen = section.open;
+    const currentHeight = content.getBoundingClientRect().height;
+    previousAnimation?.cancel();
+
+    if (opening && !section.open) section.open = true;
+    const fullHeight = content.scrollHeight;
+    const startHeight = wasOpen ? currentHeight : 0;
+    const endHeight = opening ? fullHeight : 0;
+
+    content.style.overflow = "hidden";
+    const animation = content.animate([
+      {
+        height: `${startHeight}px`,
+        opacity: opening ? 0.35 : 1,
+        transform: opening ? "translateY(-7px)" : "translateY(0)",
+      },
+      {
+        height: `${endHeight}px`,
+        opacity: opening ? 1 : 0.25,
+        transform: opening ? "translateY(0)" : "translateY(-7px)",
+      },
+    ], {
+      duration: opening ? 170 : 130,
+      easing: opening ? "cubic-bezier(0.22, 1, 0.36, 1)" : "ease-in",
+      fill: "forwards",
+    });
+
+    sectionAnimations.set(section, animation);
+    animation.addEventListener("finish", () => {
+      if (sectionAnimations.get(section) !== animation) return;
+      sectionAnimations.delete(section);
+      if (!opening) section.open = false;
+      animation.cancel();
+      content.style.overflow = "";
+    });
+  });
+}
+
+function labelLookingGlassButton() {
+  if (vrBtn.textContent === "ENTER VR") vrBtn.textContent = "ENTER LOOKING GLASS";
+  if (vrBtn.textContent === "EXIT VR") vrBtn.textContent = "EXIT LOOKING GLASS";
+  if (vrBtn.textContent?.includes("LOOKING GLASS")) {
+    vrBtn.style.width = "150px";
+  }
+}
+
+function enhanceLookingGlassControls(panel) {
+  if (panel.dataset.collapsible === "true") return;
+  panel.dataset.collapsible = "true";
+
+  const header = panel.firstElementChild;
+  if (!header) return;
+  header.textContent = "LKG Controls";
+  header.style.textAlign = "left";
+  header.style.paddingRight = "34px";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.id = "looking-glass-controls-toggle";
+  toggle.style.position = "absolute";
+  toggle.style.top = "8px";
+  toggle.style.right = "10px";
+  toggle.style.width = "26px";
+  toggle.style.height = "26px";
+  toggle.style.padding = "0";
+  toggle.style.border = "1px solid rgba(255,255,255,0.45)";
+  toggle.style.borderRadius = "6px";
+  toggle.style.background = "rgba(0,0,0,0.35)";
+  toggle.style.color = "white";
+  toggle.style.cursor = "pointer";
+  toggle.style.fontSize = "16px";
+
+  function applyCollapsedState() {
+    for (const child of [...panel.children].slice(1)) {
+      if (child.dataset.lgOriginalDisplay == null) {
+        child.dataset.lgOriginalDisplay = child.style.display;
+      }
+      child.style.display = lgControlsCollapsed ? "none" : child.dataset.lgOriginalDisplay;
+    }
+    panel.style.width = lgControlsCollapsed ? "190px" : "320px";
+    panel.style.padding = lgControlsCollapsed ? "10px 15px" : "15px";
+    header.style.marginBottom = lgControlsCollapsed ? "0" : "8px";
+    toggle.textContent = lgControlsCollapsed ? "+" : "−";
+    toggle.title = lgControlsCollapsed ? "Expand Looking Glass controls" : "Collapse Looking Glass controls";
+    toggle.setAttribute("aria-label", toggle.title);
+    toggle.setAttribute("aria-expanded", String(!lgControlsCollapsed));
+  }
+
+  toggle.addEventListener("click", () => {
+    lgControlsCollapsed = !lgControlsCollapsed;
+    applyCollapsedState();
+  });
+  header.appendChild(toggle);
+  applyCollapsedState();
+}
+
+const lgControlsObserver = new MutationObserver(mutations => {
+  for (const mutation of mutations) {
+    for (const node of mutation.addedNodes) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (node.id === "LookingGlassWebXRControls") enhanceLookingGlassControls(node);
+      const panel = node.querySelector?.("#LookingGlassWebXRControls");
+      if (panel) enhanceLookingGlassControls(panel);
+    }
+  }
+});
+lgControlsObserver.observe(document.body, { childList: true, subtree: true });
 
 // ---------------------------------------------------------------------------
 // Desktop preview camera
@@ -86,14 +204,7 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.set(0, 0, CAMERA_Z);
 camera.lookAt(CAMERA_TARGET);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.copy(CAMERA_TARGET);
-controls.enableRotate  = true;
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.minDistance   = 10;
-controls.maxDistance   = 100000;
-controls.update();
+let controls = null;
 let cameraRollDeg = 0;
 
 function applyCameraRoll() {
@@ -103,7 +214,7 @@ function applyCameraRoll() {
 const initialCameraState = {
   position: camera.position.clone(),
   quaternion: camera.quaternion.clone(),
-  target: controls.target.clone(),
+  target: CAMERA_TARGET.clone(),
   fov: camera.fov,
 };
 
@@ -112,7 +223,8 @@ const initialCameraState = {
 // the same interactive view without reloading the page.
 let desktopCameraState = null;
 
-renderer.xr.addEventListener("sessionstart", () => {
+function handleXRSessionStart() {
+  lkgCameraGrid?.setXrPresenting(true);
   desktopCameraState = {
     position: camera.position.clone(),
     quaternion: camera.quaternion.clone(),
@@ -122,9 +234,10 @@ renderer.xr.addEventListener("sessionstart", () => {
     near: camera.near,
     far: camera.far,
   };
-});
+}
 
-renderer.xr.addEventListener("sessionend", () => {
+function handleXRSessionEnd() {
+  lkgCameraGrid?.setXrPresenting(false);
   if (desktopCameraState) {
     camera.position.copy(desktopCameraState.position);
     camera.quaternion.copy(desktopCameraState.quaternion);
@@ -148,8 +261,6 @@ renderer.xr.addEventListener("sessionend", () => {
     const width = window.innerWidth;
     const height = window.innerHeight;
     const canvas = renderer.domElement;
-    const gl = renderer.getContext();
-
     renderer.setRenderTarget(null);
     renderer.resetState();
     renderer.setPixelRatio(window.devicePixelRatio);
@@ -158,11 +269,20 @@ renderer.xr.addEventListener("sessionend", () => {
     renderer.setScissor(0, 0, width, height);
     renderer.setScissorTest(false);
 
-    // Also reset the actual GL state because the Looking Glass layer manages
-    // its quilt viewport below Three.js' renderer-state cache.
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.disable(gl.SCISSOR_TEST);
-    gl.viewport(0, 0, canvas.width, canvas.height);
+    // The public renderer reset is normally sufficient. Only touch raw WebGL
+    // when the quilt viewport/scissor survived session teardown.
+    const gl = renderer.getContext();
+    const viewport = gl.getParameter(gl.VIEWPORT);
+    const needsFallback = gl.getParameter(gl.FRAMEBUFFER_BINDING) !== null
+      || gl.isEnabled(gl.SCISSOR_TEST)
+      || viewport[0] !== 0 || viewport[1] !== 0
+      || viewport[2] !== canvas.width || viewport[3] !== canvas.height;
+    if (needsFallback) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.disable(gl.SCISSOR_TEST);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      renderer.resetState();
+    }
 
     if (sceneActive) {
       renderer.setAnimationLoop(renderFrame);
@@ -172,7 +292,60 @@ renderer.xr.addEventListener("sessionend", () => {
       renderer.setAnimationLoop(null);
     }
   });
-});
+}
+
+async function initializeRuntime() {
+  if (renderer) return;
+
+  const [{ LookingGlassWebXRPolyfill, LookingGlassConfig }, { VRButton }] = await Promise.all([
+    import("@lookingglass/webxr"),
+    import("three/addons/webxr/VRButton.js"),
+  ]);
+  lgConfig = LookingGlassConfig;
+  lookingGlass = new LookingGlassWebXRPolyfill({ ...INITIAL_LG_CONFIG });
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.xr.enabled = true;
+  renderer.xr.addEventListener("sessionstart", handleXRSessionStart);
+  renderer.xr.addEventListener("sessionend", handleXRSessionEnd);
+  sceneScreen.prepend(renderer.domElement);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.copy(CAMERA_TARGET);
+  controls.enableRotate = true;
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.minDistance = 10;
+  controls.maxDistance = 100000;
+  controls.update();
+
+  // @lookingglass/webxr 0.6.0 leaves its app-canvas mouse, wheel, and keyboard
+  // handlers attached after a session ends. These guards are registered before
+  // the library creates its XR layer, so desktop input still reaches
+  // OrbitControls but cannot fall through to the dormant Looking Glass handlers.
+  const stopDormantLkgInput = event => {
+    if (!renderer.xr.isPresenting) event.stopImmediatePropagation();
+  };
+  renderer.domElement.addEventListener("mousemove", stopDormantLkgInput);
+  renderer.domElement.addEventListener("wheel", stopDormantLkgInput);
+  renderer.domElement.addEventListener("keydown", stopDormantLkgInput);
+  renderer.domElement.addEventListener("keyup", stopDormantLkgInput);
+
+  vrBtn = VRButton.createButton(renderer);
+  vrBtn.style.top = "12px";
+  vrBtn.style.left = "12px";
+  vrBtn.style.bottom = "";
+  vrBtn.style.right = "";
+  sceneScreen.appendChild(vrBtn);
+  new MutationObserver(labelLookingGlassButton).observe(vrBtn, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  labelLookingGlassButton();
+}
 
 // --- Load assets ---
 const BASE = "/";
@@ -217,10 +390,15 @@ function applyTransform(sprites, rawStars, cfg) {
 async function init() {
   // Load shared config (written by notebook, editable for defaults)
   const defaultCfg = {
-    transform: "log10", bg_dist_pc: 3162.2777, bg_z_scene: 0,
+    transform: "log10", bg_dist_pc: 2000, bg_z_scene: 0,
     depth_coeff: 0.1, no_parallax_dist_factor: 1.2, img_w: 3000,
     pixel_scale_arcsec: 1.0, xy_mode: "raw", nebula_pos_shift: 0, scene_shift: 0,
-    nebula_transform: "log",
+    show_no_parallax_stars: false,
+    star_selection_enabled: true,
+    star_size_scale: 0.4,
+    small_star_protection: true,
+    min_star_core_px: 0.9,
+    nebula_transform: "linear",
     grid_line_width: 1.55, grid_brightness: 1, grid_angular_density: 10,
     grid_distance_shells: 7, grid_labels: true, grid_sightlines: true,
   };
@@ -236,13 +414,23 @@ async function init() {
 
   const cfg = { ...baseCfg };
 
-  const { group: starGroup, sprites, rawStars, meta } =
+  const {
+    group: starGroup,
+    sprites,
+    rawStars,
+    meta,
+    setSizeScale: setStarSizeScale,
+    updateSmallStarProtection,
+  } =
     await buildStarfield(BASE + "stars.json", cfg);
   scene.add(starGroup);
 
   const grid = buildAdaptiveGrid(cfg, rawStars, meta, gridLabelLayer);
   gridController = grid;
   scene.add(grid.group);
+  lkgCameraGrid = buildLkgCameraGrid(lgConfig, camera, lkgCameraLabelLayer);
+  lkgCameraGrid.setResolution(window.innerWidth, window.innerHeight);
+  scene.add(lkgCameraGrid.group);
   if (!grid.supported) console.warn("RA/Dec grid disabled: TAN WCS metadata is unavailable.");
 
   const sceneWidth = 3000;
@@ -294,26 +482,51 @@ async function init() {
   // --- Scene toggle state ---
   let rgbdMode  = true;
   let showStars = true;
-  let showGrid  = true;
+  let showGrid  = false;
+  let showLkgCameraGrid = false;
 
   const btnStars    = document.getElementById("btn-stars");
   const btnNebula3d = document.getElementById("btn-nebula3d");
   const btnGrid      = document.getElementById("btn-grid");
+  const btnLkgCamGrid = document.getElementById("btn-lkg-cam-grid");
+  const btnStarSelection = document.getElementById("btn-star-selection");
+
+  starInteraction = createStarInteraction({
+    layer: document.getElementById("star-interaction-layer"),
+    canvas: renderer.domElement,
+    camera,
+    renderer,
+    sprites,
+    rawStars,
+    catalogUrl: BASE + (meta.catalog ?? "star_catalog.json"),
+    canInteract: () => cfg.star_selection_enabled && showStars && !renderer.xr.isPresenting,
+    isSelectable: index => showStars && sprites[index].visible,
+  });
 
   function applyVisibility() {
     starGroup.visible  = showStars;
     nebula.visible     = !rgbdMode;
     nebulaRGBD.visible = rgbdMode;
     grid.group.visible = showGrid && grid.supported;
+    lkgCameraGrid.setVisible(showLkgCameraGrid);
     btnStars.classList.toggle("active", showStars);
     btnNebula3d.classList.toggle("active", rgbdMode);
     btnGrid.classList.toggle("active", showGrid && grid.supported);
+    btnLkgCamGrid.classList.toggle("active", showLkgCameraGrid);
     btnGrid.disabled = !grid.supported;
+    starInteraction.refresh();
   }
 
   btnStars.addEventListener("click",    () => { showStars = !showStars; applyVisibility(); });
   btnNebula3d.addEventListener("click", () => { rgbdMode  = !rgbdMode;  applyVisibility(); });
   btnGrid.addEventListener("click",     () => { showGrid  = !showGrid;   applyVisibility(); });
+  btnLkgCamGrid.addEventListener("click", () => {
+    showLkgCameraGrid = !showLkgCameraGrid;
+    controls.maxDistance = showLkgCameraGrid
+      ? Math.max(100000, lkgCameraGrid.cameraDistance * 2.5)
+      : 100000;
+    applyVisibility();
+  });
 
   // --- Transform panel UI ---
   const savedCfg = { ...baseCfg }; // snapshot of data/export/scene_config.json defaults for Reset
@@ -322,6 +535,12 @@ async function init() {
   const btnLinear     = document.getElementById("btn-linear");
   const btnXyRaw      = document.getElementById("btn-xy-raw");
   const btnXyCorrected = document.getElementById("btn-xy-corrected");
+  const btnShowNoParallax = document.getElementById("btn-show-no-parallax");
+  const sliderStarSize = document.getElementById("slider-star-size");
+  const valStarSize = document.getElementById("val-star-size");
+  const btnSmallStarProtection = document.getElementById("btn-small-star-protection");
+  const sliderMinStarCore = document.getElementById("slider-min-star-core");
+  const valMinStarCore = document.getElementById("val-min-star-core");
 
   const sliderBgDist    = document.getElementById("slider-bg-dist");
   const inputBgDist     = document.getElementById("input-bg-dist");
@@ -369,6 +588,18 @@ async function init() {
   const btnCameraNorth = document.getElementById("btn-camera-north");
   const btnResetCameraTarget = document.getElementById("btn-reset-camera-target");
   const btnResetCameraLens = document.getElementById("btn-reset-camera-lens");
+  const btnResetLgView = document.getElementById("btn-reset-lg-view");
+  const btnResetLgTrackball = document.getElementById("btn-reset-lg-trackball");
+  const lgFields = {
+    targetX: [document.getElementById("slider-lg-target-x"), document.getElementById("val-lg-target-x")],
+    targetY: [document.getElementById("slider-lg-target-y"), document.getElementById("val-lg-target-y")],
+    targetZ: [document.getElementById("slider-lg-target-z"), document.getElementById("val-lg-target-z")],
+    targetDiam: [document.getElementById("slider-lg-diameter"), document.getElementById("val-lg-diameter")],
+    fovy: [document.getElementById("slider-lg-fovy"), document.getElementById("val-lg-fovy")],
+    depthiness: [document.getElementById("slider-lg-depthiness"), document.getElementById("val-lg-depthiness")],
+    trackballX: [document.getElementById("slider-lg-trackball-x"), document.getElementById("val-lg-trackball-x")],
+    trackballY: [document.getElementById("slider-lg-trackball-y"), document.getElementById("val-lg-trackball-y")],
+  };
   const nebulaTransformButtons = [...document.querySelectorAll("[data-nebula-transform]")];
 
   function setCameraField(name, value, digits = 0) {
@@ -395,6 +626,52 @@ async function init() {
     setCameraField("fov", state.fov, 1);
   }
 
+  function syncLgUI() {
+    for (const [name, [slider, input]] of Object.entries(lgFields)) {
+      const value = Number(lgConfig[name]);
+      slider.value = value;
+      input.value = Number.isInteger(value) ? value : Number(value.toFixed(3));
+    }
+  }
+
+  // Looking Glass' built-in mouse/keyboard controls update the shared config
+  // directly. Reflect those external changes back into this menu once per frame.
+  let lgUiSyncFrame = 0;
+  function scheduleLgUiSync() {
+    if (lgUiSyncFrame) return;
+    lgUiSyncFrame = requestAnimationFrame(() => {
+      lgUiSyncFrame = 0;
+      syncLgUI();
+    });
+  }
+  lgConfig.addEventListener("on-config-changed", scheduleLgUiSync);
+
+  function resetLgView() {
+    lookingGlass.update({ ...INITIAL_LG_CONFIG });
+    syncLgUI();
+  }
+
+  function resetLgTrackball() {
+    lookingGlass.update({
+      trackballX: INITIAL_LG_CONFIG.trackballX,
+      trackballY: INITIAL_LG_CONFIG.trackballY,
+    });
+    syncLgUI();
+  }
+
+  function bindLgField(name) {
+    const [slider, input] = lgFields[name];
+    const update = value => {
+      if (!Number.isFinite(value)) return syncLgUI();
+      const clamped = THREE.MathUtils.clamp(value, Number(slider.min), Number(slider.max));
+      lookingGlass.update({ [name]: clamped });
+      syncLgUI();
+    };
+    slider.addEventListener("input", () => update(Number(slider.value)));
+    input.addEventListener("change", () => update(Number(input.value)));
+    slider.addEventListener("dblclick", () => update(INITIAL_LG_CONFIG[name]));
+  }
+
   function resetCamera() {
     const state = editableCameraState();
     state.position.copy(initialCameraState.position);
@@ -409,9 +686,6 @@ async function init() {
       controls.target.copy(state.target);
     }
     cameraRollDeg = 0;
-    lgConfig.targetX = initialLgTarget.x;
-    lgConfig.targetY = initialLgTarget.y;
-    lgConfig.targetZ = initialLgTarget.z;
     if (!renderer.xr.isPresenting) {
       camera.updateProjectionMatrix();
       controls.update();
@@ -423,9 +697,6 @@ async function init() {
     const state = editableCameraState();
     state.position.copy(initialCameraState.position);
     if (!renderer.xr.isPresenting) camera.position.copy(state.position);
-    lgConfig.targetX = initialLgTarget.x;
-    lgConfig.targetY = initialLgTarget.y;
-    lgConfig.targetZ = initialLgTarget.z;
     if (!renderer.xr.isPresenting) controls.update();
     syncCameraUI();
   }
@@ -502,28 +773,15 @@ async function init() {
     slider.addEventListener("input", () => update(Number(slider.value)));
     input.addEventListener("change", () => update(Number(input.value)));
     slider.addEventListener("dblclick", () => {
-      if (["x", "y", "z"].includes(name)) {
-        const state = editableCameraState();
-        state.position[name] = cameraDefaults[name];
-        if (!renderer.xr.isPresenting) camera.position[name] = cameraDefaults[name];
-        const targetKey = `target${name.toUpperCase()}`;
-        lgConfig[targetKey] = initialLgTarget[name];
-        controls.update();
-        syncCameraUI();
-      } else {
-        update(cameraDefaults[name]);
-      }
+      update(cameraDefaults[name]);
     });
   }
 
   for (const axis of ["x", "y", "z"]) {
     bindCameraField(axis, value => {
       const state = editableCameraState();
-      const delta = value - state.position[axis];
       state.position[axis] = value;
       if (!renderer.xr.isPresenting) camera.position[axis] = value;
-      const targetKey = `target${axis.toUpperCase()}`;
-      lgConfig[targetKey] += delta;
     });
   }
   for (const [name, axis] of [["targetX", "x"], ["targetY", "y"], ["targetZ", "z"]]) {
@@ -548,6 +806,9 @@ async function init() {
   btnCameraNorth.addEventListener("click", alignCameraToNorth);
   btnResetCameraTarget.addEventListener("click", resetCameraTarget);
   btnResetCameraLens.addEventListener("click", resetCameraLens);
+  for (const name of Object.keys(lgFields)) bindLgField(name);
+  btnResetLgView.addEventListener("click", resetLgView);
+  btnResetLgTrackball.addEventListener("click", resetLgTrackball);
   controls.addEventListener("change", syncCameraUI);
   btnCameraNorth.disabled = !cfg.wcs?.pc || !cfg.wcs?.cdelt;
 
@@ -556,6 +817,16 @@ async function init() {
     btnLinear.classList.toggle("active",      cfg.transform === "linear");
     btnXyRaw.classList.toggle("active",       cfg.xy_mode !== "corrected");
     btnXyCorrected.classList.toggle("active", cfg.xy_mode === "corrected");
+    btnShowNoParallax.classList.toggle("active", cfg.show_no_parallax_stars);
+    btnShowNoParallax.setAttribute("aria-pressed", String(cfg.show_no_parallax_stars));
+    btnStarSelection.classList.toggle("active", cfg.star_selection_enabled);
+    btnStarSelection.setAttribute("aria-pressed", String(cfg.star_selection_enabled));
+    sliderStarSize.value = cfg.star_size_scale;
+    valStarSize.value = Number(cfg.star_size_scale).toFixed(2);
+    btnSmallStarProtection.classList.toggle("active", cfg.small_star_protection);
+    btnSmallStarProtection.setAttribute("aria-pressed", String(cfg.small_star_protection));
+    sliderMinStarCore.value = cfg.min_star_core_px;
+    valMinStarCore.value = Number(cfg.min_star_core_px).toFixed(2);
     for (const button of nebulaTransformButtons) {
       button.classList.toggle("active", button.dataset.nebulaTransform === cfg.nebula_transform);
     }
@@ -595,7 +866,15 @@ async function init() {
 
   function onCfgChanged() {
     applyTransform(sprites, rawStars, cfg);
+    applyStarVisibilityFilter();
     scheduleGridRebuild();
+  }
+
+  function applyStarVisibilityFilter() {
+    for (let i = 0; i < sprites.length; i++) {
+      sprites[i].visible = cfg.show_no_parallax_stars || rawStars[i].dist_pc != null;
+    }
+    starInteraction.refresh();
   }
 
   btnLog10.addEventListener("click", () => {
@@ -610,6 +889,21 @@ async function init() {
   btnXyCorrected.addEventListener("click", () => {
     cfg.xy_mode = "corrected"; syncUIFromCfg(); onCfgChanged();
   });
+  btnShowNoParallax.addEventListener("click", () => {
+    cfg.show_no_parallax_stars = !cfg.show_no_parallax_stars;
+    syncUIFromCfg();
+    applyStarVisibilityFilter();
+  });
+  btnStarSelection.addEventListener("click", () => {
+    cfg.star_selection_enabled = !cfg.star_selection_enabled;
+    syncUIFromCfg();
+    starInteraction.refresh();
+  });
+  btnSmallStarProtection.addEventListener("click", () => {
+    cfg.small_star_protection = !cfg.small_star_protection;
+    syncUIFromCfg();
+    updateSmallStarProtection(cfg.small_star_protection, cfg.min_star_core_px);
+  });
   for (const button of nebulaTransformButtons) {
     button.addEventListener("click", () => {
       cfg.nebula_transform = button.dataset.nebulaTransform;
@@ -621,6 +915,8 @@ async function init() {
   sliderBgDist.addEventListener("dblclick",    () => { cfg.bg_dist_pc              = savedCfg.bg_dist_pc;              syncUIFromCfg(); onCfgChanged(); });
   sliderDepthCoef.addEventListener("dblclick", () => { cfg.depth_coeff             = savedCfg.depth_coeff;             syncUIFromCfg(); onCfgChanged(); });
   sliderNoPar.addEventListener("dblclick",     () => { cfg.no_parallax_dist_factor = savedCfg.no_parallax_dist_factor; syncUIFromCfg(); onCfgChanged(); });
+  sliderStarSize.addEventListener("dblclick",  () => { cfg.star_size_scale         = savedCfg.star_size_scale;         syncUIFromCfg(); setStarSizeScale(cfg.star_size_scale); });
+  sliderMinStarCore.addEventListener("dblclick", () => { cfg.min_star_core_px = savedCfg.min_star_core_px; syncUIFromCfg(); updateSmallStarProtection(cfg.small_star_protection, cfg.min_star_core_px); });
   sliderNebulaShift.addEventListener("dblclick", () => { cfg.nebula_pos_shift = savedCfg.nebula_pos_shift ?? 0; syncUIFromCfg(); applyShifts(); });
   sliderSceneShift.addEventListener("dblclick",  () => { cfg.scene_shift      = savedCfg.scene_shift      ?? 0; syncUIFromCfg(); applyShifts(); });
 
@@ -628,6 +924,32 @@ async function init() {
     cfg.bg_dist_pc = parseFloat(sliderBgDist.value);
     inputBgDist.value = Math.round(cfg.bg_dist_pc);
     onCfgChanged();
+  });
+  sliderStarSize.addEventListener("input", () => {
+    cfg.star_size_scale = Number(sliderStarSize.value);
+    valStarSize.value = cfg.star_size_scale.toFixed(2);
+    setStarSizeScale(cfg.star_size_scale);
+  });
+  valStarSize.addEventListener("change", () => {
+    const value = Number(valStarSize.value);
+    if (Number.isFinite(value)) {
+      cfg.star_size_scale = THREE.MathUtils.clamp(value, Number(sliderStarSize.min), Number(sliderStarSize.max));
+      syncUIFromCfg();
+      setStarSizeScale(cfg.star_size_scale);
+    }
+  });
+  sliderMinStarCore.addEventListener("input", () => {
+    cfg.min_star_core_px = Number(sliderMinStarCore.value);
+    valMinStarCore.value = cfg.min_star_core_px.toFixed(2);
+    updateSmallStarProtection(cfg.small_star_protection, cfg.min_star_core_px);
+  });
+  valMinStarCore.addEventListener("change", () => {
+    const value = Number(valMinStarCore.value);
+    if (Number.isFinite(value)) {
+      cfg.min_star_core_px = THREE.MathUtils.clamp(value, Number(sliderMinStarCore.min), Number(sliderMinStarCore.max));
+      syncUIFromCfg();
+      updateSmallStarProtection(cfg.small_star_protection, cfg.min_star_core_px);
+    }
   });
   inputBgDist.addEventListener("change", () => {
     const v = parseFloat(inputBgDist.value);
@@ -725,10 +1047,13 @@ async function init() {
     applyNebulaTransform();
     applyShifts();
     resetCamera();
+    resetLgView();
   });
 
   syncUIFromCfg();
+  applyStarVisibilityFilter();
   syncCameraUI();
+  syncLgUI();
   applyVisibility();
 
   console.log(`Loaded ${sprites.length} stars`);
@@ -740,6 +1065,7 @@ async function enterScene() {
   enterSceneButton.textContent = sceneInitialized ? "Entering…" : "Loading scene…";
 
   try {
+    await initializeRuntime();
     if (!sceneInitPromise) sceneInitPromise = init();
     await sceneInitPromise;
     sceneInitialized = true;
@@ -767,6 +1093,7 @@ async function enterScene() {
 async function exitScene() {
   sceneActive = false;
   setControlPanelOpen(false);
+  starInteraction?.clear();
 
   const xrSession = renderer.xr.getSession();
   if (xrSession) {
@@ -779,6 +1106,7 @@ async function exitScene() {
 
   renderer.setAnimationLoop(null);
   gridLabelLayer.style.display = "none";
+  lkgCameraLabelLayer.style.display = "none";
   sceneScreen.hidden = true;
   homeScreen.hidden = false;
 }
@@ -789,9 +1117,11 @@ exitSceneButton.addEventListener("click", exitScene);
 // --- Zoom-compensation state ---
 // --- Resize handler ---
 window.addEventListener("resize", () => {
+  if (!renderer) return;
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  lkgCameraGrid?.setResolution(window.innerWidth, window.innerHeight);
 });
 
 // --- Render loop ---
@@ -802,5 +1132,7 @@ function renderFrame() {
     applyCameraRoll();
   }
   gridController?.updateLabels(camera, renderer);
+  lkgCameraGrid?.updateLabels(camera, renderer);
+  starInteraction?.update();
   renderer.render(scene, camera);
 }

@@ -6,9 +6,9 @@ export default defineConfig({
   root: path.resolve(__dirname),
   publicDir: path.resolve(__dirname, "..", "data", "export"),
   server: {
-    // Windows may resolve localhost to IPv6 (::1), which can be blocked by the
-    // local socket policy. Bind explicitly to the IPv4 loopback interface.
-    host: "127.0.0.1",
+    // Listen on every IPv4 interface so localhost and Tailscale can reach it.
+    // Access remains subject to the host firewall and Tailscale policy.
+    host: "0.0.0.0",
     // Port 5173 is unavailable under the current Windows socket policy.
     port: 4173,
     open: true,

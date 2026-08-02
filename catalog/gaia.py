@@ -6,30 +6,29 @@ Typical usage:
     matches = crossmatch(catalog, gaia_df, pixscale=ps_result.pixscale)
 """
 
+import io
 import warnings
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+import requests
 from astropy.coordinates import SkyCoord
+from astropy.table import Table
 import astropy.units as u
-from astroquery.gaia import Gaia
 
 from detect.sep_det import SourceCatalog
 
 
-_GAIA_COLUMNS = "source_id, ra, dec, phot_g_mean_mag, parallax, pmra, pmdec"
+_GAIA_COLUMNS = """
+source_id, ra, dec,
+phot_g_mean_mag, phot_bp_mean_mag, phot_rp_mean_mag, bp_rp,
+parallax, parallax_error,
+pmra, pmra_error, pmdec, pmdec_error,
+radial_velocity, radial_velocity_error, ruwe
+""".replace("\n", " ")
 
-_ADQL = """
-SELECT {cols}
-FROM gaiadr3.gaia_source
-WHERE 1 = CONTAINS(
-    POINT('ICRS', ra, dec),
-    CIRCLE('ICRS', {ra:.6f}, {dec:.6f}, {radius:.6f})
-)
-AND phot_g_mean_mag IS NOT NULL
-ORDER BY phot_g_mean_mag ASC
-""".strip()
+GAIA_CONE_URL = "https://gaia.ari.uni-heidelberg.de/cone/search"
 
 
 def query_gaia(
@@ -37,6 +36,8 @@ def query_gaia(
     dec: float,
     radius: float,
     row_limit: int = 500_000,
+    cone_url: str = GAIA_CONE_URL,
+    timeout: float = 300.0,
 ) -> pd.DataFrame:
     """
     Cone-search Gaia DR3 around (ra, dec).
@@ -51,18 +52,32 @@ def query_gaia(
     row_limit:
         Safety cap on returned rows. A warning is emitted if the result
         hits this limit (TAP truncation may have occurred).
+    cone_url:
+        Gaia DR3 Simple Cone Search endpoint. Defaults to ARI's mirror.
+    timeout:
+        HTTP timeout in seconds.
 
     Returns
     -------
     pd.DataFrame
-        Columns: source_id, ra, dec, phot_g_mean_mag,
-                 parallax, pmra, pmdec.
+        Columns include astrometry, proper motion, G/BP/RP photometry,
+        radial velocity, and RUWE for the interactive star catalog.
         Sorted brightest-first.
     """
-    query = _ADQL.format(cols=_GAIA_COLUMNS, ra=ra, dec=dec, radius=radius)
-    Gaia.ROW_LIMIT = row_limit
-    job = Gaia.launch_job_async(query)
-    df = job.get_results().to_pandas()
+    response = requests.get(
+        cone_url,
+        params={"RA": ra, "DEC": dec, "SR": radius, "VERB": 2},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    table = Table.read(io.BytesIO(response.content), format="votable")
+    df = table.to_pandas()
+    selected_columns = [name.strip() for name in _GAIA_COLUMNS.split(",")]
+    df = df[selected_columns]
+    df = df[df["phot_g_mean_mag"].notna()].sort_values("phot_g_mean_mag")
+
+    if len(df) > row_limit:
+        df = df.head(row_limit).copy()
 
     if len(df) == row_limit:
         warnings.warn(
@@ -113,18 +128,12 @@ def crossmatch(
         warnings.warn("No sources have ra/dec — was WCS provided to detect()?", stacklevel=2)
 
     # --- build match arrays ---
-    gaia_match_cols = {
-        "gaia_source_id": pd.array([], dtype="Int64"),
-        "gaia_ra": np.array([]),
-        "gaia_dec": np.array([]),
-        "gaia_g_mag": np.array([]),
-        "gaia_parallax": np.array([]),
-        "gaia_pmra": np.array([]),
-        "gaia_pmdec": np.array([]),
-    }
-
     # nearest-neighbour match
     matched_gaia: dict[int, dict] = {}  # source index → gaia row info
+
+    def optional_float(row: pd.Series, name: str) -> float:
+        value = row.get(name)
+        return float(value) if value is not None and pd.notna(value) else float("nan")
 
     if sources_with_coords and len(gaia_df) > 0:
         det_ra  = np.array([s.ra  for _, s in sources_with_coords])
@@ -152,10 +161,19 @@ def crossmatch(
                     gaia_source_id=int(g["source_id"]),
                     gaia_ra=float(g["ra"]),
                     gaia_dec=float(g["dec"]),
-                    gaia_g_mag=float(g["phot_g_mean_mag"]),
-                    gaia_parallax=float(g["parallax"]) if g["parallax"] is not None else float("nan"),
-                    gaia_pmra=float(g["pmra"])   if g["pmra"]   is not None else float("nan"),
-                    gaia_pmdec=float(g["pmdec"]) if g["pmdec"]  is not None else float("nan"),
+                    gaia_g_mag=optional_float(g, "phot_g_mean_mag"),
+                    gaia_bp_mag=optional_float(g, "phot_bp_mean_mag"),
+                    gaia_rp_mag=optional_float(g, "phot_rp_mean_mag"),
+                    gaia_bp_rp=optional_float(g, "bp_rp"),
+                    gaia_parallax=optional_float(g, "parallax"),
+                    gaia_parallax_error=optional_float(g, "parallax_error"),
+                    gaia_pmra=optional_float(g, "pmra"),
+                    gaia_pmra_error=optional_float(g, "pmra_error"),
+                    gaia_pmdec=optional_float(g, "pmdec"),
+                    gaia_pmdec_error=optional_float(g, "pmdec_error"),
+                    gaia_radial_velocity=optional_float(g, "radial_velocity"),
+                    gaia_radial_velocity_error=optional_float(g, "radial_velocity_error"),
+                    gaia_ruwe=optional_float(g, "ruwe"),
                 )
 
     # --- assemble rows ---
@@ -166,9 +184,18 @@ def crossmatch(
         gaia_ra=float("nan"),
         gaia_dec=float("nan"),
         gaia_g_mag=float("nan"),
+        gaia_bp_mag=float("nan"),
+        gaia_rp_mag=float("nan"),
+        gaia_bp_rp=float("nan"),
         gaia_parallax=float("nan"),
+        gaia_parallax_error=float("nan"),
         gaia_pmra=float("nan"),
+        gaia_pmra_error=float("nan"),
         gaia_pmdec=float("nan"),
+        gaia_pmdec_error=float("nan"),
+        gaia_radial_velocity=float("nan"),
+        gaia_radial_velocity_error=float("nan"),
+        gaia_ruwe=float("nan"),
     )
 
     rows = []

@@ -272,12 +272,122 @@
       .panel-title-row .panel-title {
         margin-bottom: 0 !important;
       }
-      #grid-label-layer {
+      #grid-label-layer,
+      #lkg-camera-label-layer {
         position: fixed;
         inset: 0;
         z-index: 25;
         overflow: hidden;
         pointer-events: none;
+      }
+      canvas.star-selection-enabled { cursor: crosshair; }
+      #star-interaction-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 90;
+        overflow: hidden;
+        pointer-events: none;
+        color: #e9f3ff;
+      }
+      .star-selection-marker,
+      .star-selection-tag,
+      .star-info-card { display: none; position: absolute; }
+      #star-interaction-layer.has-selection.selection-on-screen .star-selection-marker,
+      #star-interaction-layer.has-selection.selection-on-screen .star-selection-tag,
+      #star-interaction-layer.has-selection.selection-on-screen .star-info-card { display: block; }
+      .star-selection-marker {
+        width: 26px;
+        height: 26px;
+        border: 1px solid rgba(142,211,255,0.78);
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        filter: drop-shadow(0 0 4px rgba(76,176,255,0.55));
+      }
+      .star-selection-marker::before,
+      .star-selection-marker::after {
+        content: "";
+        position: absolute;
+        background: rgba(181,226,255,0.95);
+      }
+      .star-selection-marker::before {
+        left: -6px;
+        top: 12px;
+        width: 38px;
+        height: 1px;
+      }
+      .star-selection-marker::after {
+        left: 12px;
+        top: -6px;
+        width: 1px;
+        height: 38px;
+      }
+      .star-selection-tag {
+        max-width: 180px;
+        overflow: hidden;
+        padding: 3px 7px;
+        border-left: 2px solid rgba(117,204,255,0.9);
+        background: rgba(2,7,14,0.72);
+        color: #cfeaff;
+        font: 11px/1.25 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .star-info-card {
+        width: min(320px, calc(100vw - 24px));
+        max-height: min(560px, calc(100vh - 24px));
+        overflow-y: auto;
+        padding: 15px 16px 16px;
+        border: 1px solid rgba(154,207,245,0.25);
+        border-radius: 9px;
+        background: linear-gradient(160deg, rgba(11,21,34,0.95), rgba(3,7,13,0.94));
+        box-shadow: 0 12px 38px rgba(0,0,0,0.48), inset 0 1px rgba(255,255,255,0.04);
+        backdrop-filter: blur(18px);
+        pointer-events: auto;
+      }
+      .star-info-close {
+        position: absolute;
+        top: 8px;
+        right: 9px;
+        width: 25px;
+        height: 25px;
+        border: 0;
+        background: transparent;
+        color: #8495a8;
+        font: 18px/1 sans-serif;
+        cursor: pointer;
+      }
+      .star-info-close:hover { color: #f1f7ff; }
+      .star-info-title {
+        padding-right: 24px;
+        color: #f1f7ff;
+        font-size: 14px;
+        letter-spacing: 0.02em;
+      }
+      .star-info-subtitle {
+        margin-top: 3px;
+        color: #8da2b8;
+        font-size: 11px;
+      }
+      .star-info-section-title {
+        margin: 13px 0 5px;
+        color: #75bde8;
+        font-size: 10px;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+      .star-info-grid {
+        display: grid;
+        grid-template-columns: minmax(100px, auto) 1fr;
+        gap: 4px 12px;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .star-info-grid dt { color: #7f91a5; }
+      .star-info-grid dd {
+        min-width: 0;
+        color: #d8e4f0;
+        text-align: right;
+        overflow-wrap: anywhere;
       }
       .grid-edge-label {
         position: absolute;
@@ -290,6 +400,17 @@
         white-space: nowrap;
         transform: translate(-50%, -50%);
         will-change: left, top;
+      }
+      .lkg-camera-label {
+        position: absolute;
+        padding: 3px 7px 4px;
+        border: 1px solid rgba(255,255,255,0.16);
+        border-radius: 4px;
+        background: rgba(2,5,10,0.82);
+        box-shadow: 0 1px 6px rgba(0,0,0,0.65);
+        font: 12px/1.2 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+        white-space: nowrap;
+        transform: translate(-50%, -50%);
       }
       @media (max-width: 600px) {
         #transform-panel { width: calc(100vw - 12px); }
@@ -306,6 +427,17 @@
 
     <section id="scene-screen" hidden>
     <div id="grid-label-layer" aria-hidden="true"></div>
+    <div id="lkg-camera-label-layer" aria-hidden="true"></div>
+    <div id="star-interaction-layer" aria-live="polite">
+      <div class="star-selection-marker" aria-hidden="true"></div>
+      <div class="star-selection-tag"></div>
+      <aside class="star-info-card" aria-label="Selected star information">
+        <button class="star-info-close" type="button" aria-label="Close star information">×</button>
+        <div class="star-info-title"></div>
+        <div class="star-info-subtitle"></div>
+        <div class="star-info-body"></div>
+      </aside>
+    </div>
     <div id="info">
       Drag to orbit &nbsp;|&nbsp; Scroll to zoom<br/>
       Click VR to open Looking Glass
@@ -315,7 +447,8 @@
     <div id="controls">
       <button class="ctrl-btn active" id="btn-stars">Stars</button>
       <button class="ctrl-btn active" id="btn-nebula3d">3D Nebula</button>
-      <button class="ctrl-btn active" id="btn-grid">RA/Dec Grid</button>
+      <button class="ctrl-btn" id="btn-grid">RA/Dec Grid</button>
+      <button class="ctrl-btn" id="btn-lkg-cam-grid">LKG Cam Grid</button>
     </div>
 
     <button id="menu-toggle" type="button" aria-label="Open scene controls"
@@ -347,10 +480,38 @@
             <button class="ctrl-btn" id="btn-xy-corrected">corrected</button>
           </div>
 
+          <div class="panel-title">Visibility</div>
+          <div class="transform-row">
+            <button class="ctrl-btn" id="btn-show-no-parallax"
+                    type="button" aria-pressed="false">no-parallax stars</button>
+          </div>
+
+          <div class="panel-title">Interaction</div>
+          <div class="transform-row">
+            <button class="ctrl-btn active" id="btn-star-selection"
+                    type="button" aria-pressed="true">star selection</button>
+          </div>
+
+          <div class="panel-title">Appearance</div>
+          <div class="transform-row">
+            <button class="ctrl-btn active" id="btn-small-star-protection"
+                    type="button" aria-pressed="true">small-star protection</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">size scale</span>
+            <input type="range" id="slider-star-size" min="0.1" max="1.2" step="0.05" value="0.4" />
+            <input type="number" id="val-star-size" min="0.1" max="1.2" step="0.05" value="0.4" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">min core (px)</span>
+            <input type="range" id="slider-min-star-core" min="0.5" max="3" step="0.05" value="0.9" />
+            <input type="number" id="val-min-star-core" min="0.5" max="3" step="0.05" value="0.9" />
+          </div>
+
           <div class="param-row">
             <span class="param-label">bg dist (pc)</span>
-            <input type="range" id="slider-bg-dist" min="500" max="10000" step="50" value="3162" />
-            <input type="number" id="input-bg-dist" min="100" step="100" value="3162" />
+            <input type="range" id="slider-bg-dist" min="500" max="10000" step="50" value="2000" />
+            <input type="number" id="input-bg-dist" min="100" step="100" value="2000" />
           </div>
           <div class="param-row">
             <span class="param-label">depth coeff</span>
@@ -370,10 +531,10 @@
         <div class="section-content">
           <div class="panel-title">Signal Transform</div>
           <div class="transform-row" id="nebula-transform-row">
-            <button class="ctrl-btn" data-nebula-transform="linear">linear</button>
+            <button class="ctrl-btn active" data-nebula-transform="linear">linear</button>
             <button class="ctrl-btn" data-nebula-transform="sqrt">sqrt</button>
             <button class="ctrl-btn" data-nebula-transform="cbrt">cbrt</button>
-            <button class="ctrl-btn active" data-nebula-transform="log">log</button>
+            <button class="ctrl-btn" data-nebula-transform="log">log</button>
             <button class="ctrl-btn" data-nebula-transform="power2">power²</button>
             <button class="ctrl-btn" data-nebula-transform="threshold">threshold</button>
           </div>
@@ -490,6 +651,64 @@
             <span class="param-label">FOV</span>
             <input type="range" id="slider-camera-fov" min="5" max="90" step="1" value="25" />
             <input type="number" id="val-camera-fov" min="5" max="90" step="1" value="25" />
+          </div>
+        </div>
+      </details>
+
+      <details class="control-section">
+        <summary>Looking Glass View</summary>
+        <div class="section-content">
+          <div class="panel-title-row">
+            <div class="panel-title">View Target</div>
+            <button class="camera-reset" id="btn-reset-lg-view" title="Reset Looking Glass view" aria-label="Reset Looking Glass view">↺</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">target x</span>
+            <input type="range" id="slider-lg-target-x" min="-5000" max="5000" step="10" value="80" />
+            <input type="number" id="val-lg-target-x" step="10" value="80" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">target y</span>
+            <input type="range" id="slider-lg-target-y" min="-5000" max="5000" step="10" value="0" />
+            <input type="number" id="val-lg-target-y" step="10" value="0" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">target z</span>
+            <input type="range" id="slider-lg-target-z" min="-5000" max="5000" step="10" value="-0.5" />
+            <input type="number" id="val-lg-target-z" step="0.1" value="-0.5" />
+          </div>
+
+          <div class="panel-title">Framing</div>
+          <div class="param-row">
+            <span class="param-label">diameter</span>
+            <input type="range" id="slider-lg-diameter" min="100" max="10000" step="50" value="2800" />
+            <input type="number" id="val-lg-diameter" min="1" step="50" value="2800" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">FOVY (rad)</span>
+            <input type="range" id="slider-lg-fovy" min="0.005" max="0.5" step="0.005" value="0.19" />
+            <input type="number" id="val-lg-fovy" min="0.001" max="3.13" step="0.005" value="0.19" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">depthiness</span>
+            <input type="range" id="slider-lg-depthiness" min="0" max="3" step="0.05" value="1" />
+            <input type="number" id="val-lg-depthiness" min="0" max="3" step="0.05" value="1" />
+          </div>
+
+          <div class="panel-title-row">
+            <div class="panel-title">Trackball Rotation</div>
+            <button class="camera-reset" id="btn-reset-lg-trackball"
+                    title="Reset trackball rotation" aria-label="Reset Looking Glass trackball rotation">↺</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">x (rad)</span>
+            <input type="range" id="slider-lg-trackball-x" min="-3.142" max="3.142" step="0.01" value="0" />
+            <input type="number" id="val-lg-trackball-x" min="-3.142" max="3.142" step="0.01" value="0" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">y (rad)</span>
+            <input type="range" id="slider-lg-trackball-y" min="-3.142" max="3.142" step="0.01" value="0" />
+            <input type="number" id="val-lg-trackball-y" min="-3.142" max="3.142" step="0.01" value="0" />
           </div>
         </div>
       </details>

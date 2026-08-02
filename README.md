@@ -83,7 +83,8 @@ astro-hologram/
 │   ├── matches.parquet         #   cached Gaia crossmatch output
 │   └── export/                 #   Three.js stars, nebula, and scene config
 ├── pixi.toml                   # Environment + tasks
-├── run-threejs.cmd             # Windows Three.js dev launcher
+├── run-threejs.py              # Cross-platform Three.js dev launcher
+├── run-threejs.cmd             # Windows convenience launcher
 └── .env                        # API keys (not committed)
 ```
 

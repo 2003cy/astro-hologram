@@ -28,6 +28,31 @@ export async function buildStarfield(jsonUrl, cfg) {
 
   const group   = new THREE.Group();
   const sprites = [];
+  const viewportSize = new THREE.Vector2();
+
+  function displayScaleFor(sprite) {
+    const globalScale = Math.max(0.1, Number(cfg.star_size_scale) || 0.1);
+    const sourceFwhm = sprite.userData.starFwhmPx;
+    if (!cfg.small_star_protection || !Number.isFinite(sourceFwhm) || sourceFwhm <= 0) {
+      return globalScale;
+    }
+    return Math.max(globalScale, cfg.min_star_core_px / sourceFwhm);
+  }
+
+  function setSizeScale(sizeScale) {
+    cfg.star_size_scale = Math.max(0.1, Number(sizeScale) || 0.1);
+    for (const sprite of sprites) {
+      sprite.material.uniforms.uSizePx.value
+        .copy(sprite.userData.starTextureSize)
+        .multiplyScalar(displayScaleFor(sprite));
+    }
+  }
+
+  function updateSmallStarProtection(enabled, minimumCorePx) {
+    cfg.small_star_protection = Boolean(enabled);
+    cfg.min_star_core_px = Math.max(0.5, Number(minimumCorePx) || 0.5);
+    setSizeScale(cfg.star_size_scale);
+  }
 
   for (const star of stars) {
     const { px_x, px_y, px_w, px_h } = star;
@@ -40,9 +65,39 @@ export async function buildStarfield(jsonUrl, cfg) {
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
 
-    const mat = new THREE.SpriteMaterial({
-      map: texture,
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uMap: { value: texture },
+        uSizePx: { value: new THREE.Vector2(1, 1) },
+        uViewportPx: { value: new THREE.Vector2(1, 1) },
+      },
+      vertexShader: /* glsl */`
+        uniform vec2 uSizePx;
+        uniform vec2 uViewportPx;
+        varying vec2 vUv;
+
+        void main() {
+          vUv = uv;
+          vec4 clipCenter = projectionMatrix * modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          vec2 pixelOffset = position.xy * uSizePx;
+          clipCenter.xy += pixelOffset * (2.0 / uViewportPx) * clipCenter.w;
+          gl_Position = clipCenter;
+        }
+      `,
+      fragmentShader: /* glsl */`
+        uniform sampler2D uMap;
+        varying vec2 vUv;
+
+        void main() {
+          vec4 texel = texture2D(uMap, vUv);
+          gl_FragColor = texel;
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
@@ -51,13 +106,42 @@ export async function buildStarfield(jsonUrl, cfg) {
     const sprite = new THREE.Sprite(mat);
     const xy = computeXY(star.x, star.y, star.dist_pc, cfg);
     sprite.position.set(xy.x, xy.y, computeZ(star.dist_pc, cfg));
-    sprite.scale.set(px_w, px_h, 1);
+    // Preserve the dimensions of the image-extracted cutout. The shader treats
+    // these as screen pixels, so relative star sizes remain intact without
+    // changing as the camera moves or its FOV changes.
+    sprite.userData.starTextureSize = new THREE.Vector2(px_w, px_h);
+    sprite.userData.starFwhmPx = Number(star.fwhm);
+
+    // This callback runs once for every actual render camera. In Looking Glass
+    // mode that means every quilt view gets the correct per-view pixel size.
+    sprite.onBeforeRender = (activeRenderer, _scene, activeCamera) => {
+      if (activeCamera.viewport) {
+        mat.uniforms.uViewportPx.value.set(activeCamera.viewport.z, activeCamera.viewport.w);
+      } else {
+        activeRenderer.getDrawingBufferSize(viewportSize);
+        mat.uniforms.uViewportPx.value.copy(viewportSize);
+      }
+      const lookingGlassScale = activeRenderer.xr.isPresenting ? 0.5 : 1;
+      mat.uniforms.uSizePx.value
+        .copy(sprite.userData.starTextureSize)
+        .multiplyScalar(
+          displayScaleFor(sprite) * lookingGlassScale * activeRenderer.getPixelRatio(),
+        );
+    };
 
     group.add(sprite);
     sprites.push(sprite);
   }
 
-  return { group, sprites, rawStars: stars, meta };
+  setSizeScale(cfg.star_size_scale);
+  return {
+    group,
+    sprites,
+    rawStars: stars,
+    meta,
+    setSizeScale,
+    updateSmallStarProtection,
+  };
 }
 
 /**
