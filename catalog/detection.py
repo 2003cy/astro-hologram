@@ -1,3 +1,5 @@
+"""SEP-based astronomical source detection."""
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -11,25 +13,25 @@ class Source:
     x: float
     y: float
     flux: float
-    fwhm: float          # pixels
-    ellipticity: float   # 0 = circular, 1 = infinitely elongated
+    fwhm: float
+    ellipticity: float
     is_stellar: bool
-    ra: Optional[float] = None   # degrees, set when WCS is provided
+    ra: Optional[float] = None
     dec: Optional[float] = None
 
 
 @dataclass
 class SourceCatalog:
     sources: list[Source]
-    psf_fwhm: float      # estimated PSF FWHM in pixels
+    psf_fwhm: float
 
     @property
     def stars(self) -> list[Source]:
-        return [s for s in self.sources if s.is_stellar]
+        return [source for source in self.sources if source.is_stellar]
 
     @property
     def extended(self) -> list[Source]:
-        return [s for s in self.sources if not s.is_stellar]
+        return [source for source in self.sources if not source.is_stellar]
 
     def __len__(self) -> int:
         return len(self.sources)
@@ -43,20 +45,7 @@ class SourceCatalog:
 
 
 class SEPDetector:
-    """
-    Parameters
-    ----------
-    threshold_sigma:
-        Detection threshold in units of background RMS.
-    box_size:
-        Background estimation tile size in pixels.
-    fwhm_scale_stellar:
-        Source is stellar if fwhm < psf_fwhm * this factor.
-    max_ellipticity_stellar:
-        Source is stellar only if ellipticity < this value.
-    minarea:
-        Minimum connected pixels to count as a detection.
-    """
+    """Detect and classify image sources with SEP."""
 
     def __init__(
         self,
@@ -74,14 +63,11 @@ class SEPDetector:
 
     def detect(self, image: np.ndarray, wcs: Optional[WCS] = None) -> SourceCatalog:
         data = self._prepare(image)
-
-        bkg = sep.Background(data, bw=self.box_size, bh=self.box_size)
-        data_sub = data - bkg.back()
-
+        background = sep.Background(data, bw=self.box_size, bh=self.box_size)
         objects = sep.extract(
-            data_sub,
+            data - background.back(),
             thresh=self.threshold_sigma,
-            err=bkg.globalrms,
+            err=background.globalrms,
             minarea=self.minarea,
         )
 
@@ -89,36 +75,42 @@ class SEPDetector:
             return SourceCatalog(sources=[], psf_fwhm=0.0)
 
         fwhms = 2.35 * np.sqrt(objects["a"] * objects["b"])
-        ellips = 1.0 - objects["b"] / objects["a"]
-
-        round_mask = ellips < 0.2
+        ellipticities = 1.0 - objects["b"] / objects["a"]
+        round_mask = ellipticities < 0.2
         sample = fwhms[round_mask] if round_mask.sum() >= 3 else fwhms
         psf_fwhm = float(np.percentile(sample, 20))
         stellar_fwhm_limit = psf_fwhm * self.fwhm_scale_stellar
 
         sources = []
-        for i in range(len(objects)):
-            fwhm = float(fwhms[i])
-            ellip = float(ellips[i])
-            src = Source(
-                x=float(objects["x"][i]),
-                y=float(objects["y"][i]),
-                flux=float(objects["flux"][i]),
+        for index in range(len(objects)):
+            fwhm = float(fwhms[index])
+            ellipticity = float(ellipticities[index])
+            source = Source(
+                x=float(objects["x"][index]),
+                y=float(objects["y"][index]),
+                flux=float(objects["flux"][index]),
                 fwhm=fwhm,
-                ellipticity=ellip,
-                is_stellar=fwhm <= stellar_fwhm_limit and ellip < self.max_ellipticity_stellar,
+                ellipticity=ellipticity,
+                is_stellar=(
+                    fwhm <= stellar_fwhm_limit
+                    and ellipticity < self.max_ellipticity_stellar
+                ),
             )
             if wcs is not None:
-                sky = wcs.pixel_to_world(src.x, src.y)
-                src.ra = float(sky.ra.deg)
-                src.dec = float(sky.dec.deg)
-            sources.append(src)
+                sky = wcs.pixel_to_world(source.x, source.y)
+                source.ra = float(sky.ra.deg)
+                source.dec = float(sky.dec.deg)
+            sources.append(source)
 
         return SourceCatalog(sources=sources, psf_fwhm=psf_fwhm)
 
     @staticmethod
     def _prepare(image: np.ndarray) -> np.ndarray:
-        img = image.astype(np.float64)
-        if img.ndim == 3:
-            img = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
-        return np.ascontiguousarray(img)
+        prepared = image.astype(np.float64)
+        if prepared.ndim == 3:
+            prepared = (
+                0.2126 * prepared[..., 0]
+                + 0.7152 * prepared[..., 1]
+                + 0.0722 * prepared[..., 2]
+            )
+        return np.ascontiguousarray(prepared)

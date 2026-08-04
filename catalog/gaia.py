@@ -17,7 +17,7 @@ from astropy.coordinates import SkyCoord
 from astropy.table import Table
 import astropy.units as u
 
-from detect.sep_det import SourceCatalog
+from .detection import SourceCatalog
 
 
 _GAIA_COLUMNS = """
