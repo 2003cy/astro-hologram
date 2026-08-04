@@ -533,6 +533,7 @@ async function init() {
     nebula_transform: "linear",
     nebula_brightness: 1.0,
     nebula_opacity: 1.0,
+    camera_roll_deg: 0,
     grid_line_width: 1.55, grid_brightness: 1, grid_angular_density: 10,
     grid_distance_shells: 7, grid_labels: true, grid_sightlines: true,
   };
@@ -741,16 +742,20 @@ async function init() {
     targetZ: [document.getElementById("slider-target-z"), document.getElementById("val-target-z")],
     fov: [document.getElementById("slider-camera-fov"), document.getElementById("val-camera-fov")],
   };
+  const configuredCameraRoll = Number(cfg.camera_roll_deg);
   const cameraDefaults = {
     x: initialCameraState.position.x,
     y: initialCameraState.position.y,
     z: initialCameraState.position.z,
-    roll: 0,
+    roll: Number.isFinite(configuredCameraRoll)
+      ? THREE.MathUtils.clamp(configuredCameraRoll, -180, 180)
+      : 0,
     targetX: initialCameraState.target.x,
     targetY: initialCameraState.target.y,
     targetZ: initialCameraState.target.z,
     fov: initialCameraState.fov,
   };
+  cameraRollDeg = cameraDefaults.roll;
   const btnResetCameraPosition = document.getElementById("btn-reset-camera-position");
   const btnResetCameraRotation = document.getElementById("btn-reset-camera-rotation");
   const btnCameraNorth = document.getElementById("btn-camera-north");
@@ -878,7 +883,7 @@ async function init() {
       camera.fov = state.fov;
       controls.target.copy(state.target);
     }
-    cameraRollDeg = 0;
+    cameraRollDeg = cameraDefaults.roll;
     if (!renderer.xr.isPresenting) {
       camera.updateProjectionMatrix();
       controls.update();
@@ -895,7 +900,7 @@ async function init() {
   }
 
   function resetCameraRotation() {
-    cameraRollDeg = 0;
+    cameraRollDeg = cameraDefaults.roll;
     syncCameraUI();
   }
 

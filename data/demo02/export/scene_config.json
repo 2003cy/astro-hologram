@@ -1,0 +1,63 @@
+{
+  "transform": "log10",
+  "bg_dist_pc": 2000.0,
+  "bg_z_scene": 0.0,
+  "depth_coeff": 0.1,
+  "no_parallax_dist_factor": 1.2,
+  "nebula_transform": "linear",
+  "nebula_brightness": 1.0,
+  "camera_roll_deg": 90.0,
+  "star_size_scale": 0.4,
+  "small_star_protection": true,
+  "min_star_core_px": 0.9,
+  "pixel_scale_arcsec": 0.224164,
+  "img_w": 6248,
+  "wcs": {
+    "ctype": [
+      "RA---TAN",
+      "DEC--TAN"
+    ],
+    "crval": [
+      341.937929917,
+      58.1764100119
+    ],
+    "crpix": [
+      1534.05307007,
+      2227.57427979
+    ],
+    "pc": [
+      [
+        -1.99021477111e-05,
+        5.89965981226e-05
+      ],
+      [
+        -5.89913563425e-05,
+        -1.99461786377e-05
+      ]
+    ],
+    "cdelt": [
+      1.0,
+      1.0
+    ],
+    "radesys": "FK5",
+    "equinox": 2000.0,
+    "footprint": [
+      [
+        341.7459486756454,
+        58.31111452286032
+      ],
+      [
+        341.5136906593362,
+        57.94203430664492
+      ],
+      [
+        341.9776528208295,
+        57.85946127124735
+      ],
+      [
+        342.21418656107187,
+        58.227685102226395
+      ]
+    ]
+  }
+}

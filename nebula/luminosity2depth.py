@@ -25,6 +25,9 @@ class BackgroundModel:
 @dataclass
 class LuminosityDepthResult:
     source_path: Path
+    normalization_reference_path: Path
+    normalization_factor: float
+    normalization_input_scale: float
     color_rgb: np.ndarray
     luminance: np.ndarray
     normalized_luminance: np.ndarray
@@ -55,24 +58,61 @@ def depth_transforms() -> dict[str, Callable[[np.ndarray], np.ndarray]]:
     }
 
 
+def _load_fits_data(path: str | Path) -> np.ndarray:
+    with fits.open(Path(path)) as hdul:
+        raw = np.asarray(hdul[0].data, dtype=np.float32)
+    return np.clip(raw, 0.0, None)
+
+
+def _infer_starnet_input_scale(raw: np.ndarray) -> float:
+    finite = raw[np.isfinite(raw)]
+    if finite.size == 0:
+        raise ValueError("Normalization reference contains no finite pixels")
+    minimum = float(finite.min())
+    maximum = float(finite.max())
+    if minimum >= 0 and maximum > 2 and maximum <= 255 * 1.01:
+        return 255.0
+    if minimum >= 0 and maximum > 255 * 1.01 and maximum <= 65535 * 1.01:
+        return 65535.0
+    return 1.0
+
+
+def calculate_normalization_factor(
+    path: str | Path,
+    *,
+    white_percentile: float = 99.8,
+    input_scale: float | None = None,
+) -> tuple[float, float]:
+    """Return a white point in the normalized units written by StarNet2."""
+    if not 0 < white_percentile <= 100:
+        raise ValueError("white_percentile must be in the interval (0, 100]")
+    raw = _load_fits_data(path)
+    scale = _infer_starnet_input_scale(raw) if input_scale is None else float(input_scale)
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError("input_scale must be a positive finite number")
+    factor = float(np.percentile(raw / scale, white_percentile))
+    return factor + 1e-9, scale
+
+
 def load_nebula_layer(
     path: str | Path,
     *,
-    white_percentile: float = 99.5,
+    white_percentile: float = 99.8,
+    normalization_factor: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return raw FITS data, robustly normalized RGB, and Rec.709 luminance."""
-    if not 0 < white_percentile <= 100:
-        raise ValueError("white_percentile must be in the interval (0, 100]")
     source = Path(path)
-    with fits.open(source) as hdul:
-        raw = np.asarray(hdul[0].data, dtype=np.float32)
-    raw = np.clip(raw, 0.0, None)
-    # One shared white point preserves the RGB channel ratios. A percentile
-    # avoids letting a tiny number of hot pixels dim the complete nebula.
-    scale = float(np.percentile(raw, white_percentile)) + 1e-9
+    raw = _load_fits_data(source)
+    if normalization_factor is None:
+        normalization_factor, _ = calculate_normalization_factor(
+            source,
+            white_percentile=white_percentile,
+        )
+    if not np.isfinite(normalization_factor) or normalization_factor <= 0:
+        raise ValueError("normalization_factor must be a positive finite number")
 
     if raw.ndim == 3:
-        normalized_channels = raw / scale
+        normalized_channels = raw / normalization_factor
         color_rgb = np.transpose(normalized_channels[:3], (1, 2, 0))
         luminance = (
             0.2126 * normalized_channels[0]
@@ -80,7 +120,7 @@ def load_nebula_layer(
             + 0.0722 * normalized_channels[2]
         )
     else:
-        luminance = raw / scale
+        luminance = raw / normalization_factor
         color_rgb = np.stack([luminance] * 3, axis=-1)
     return raw, np.clip(color_rgb, 0.0, 1.0), np.clip(luminance, 0.0, 1.0)
 
@@ -151,6 +191,8 @@ def luminosity2depth(
     nebula_fits_path: str | Path,
     output_dir: str | Path | None = None,
     *,
+    normalization_reference_path: str | Path | None = None,
+    normalization_reference_input_scale: float | None = None,
     background_distance_pc: float = 2000.0,
     background_z: float = 0.0,
     depth_coefficient: float = 0.1,
@@ -163,13 +205,24 @@ def luminosity2depth(
     smoothing_sigma: float = 6.0,
     signal_histogram_bins: int = 256,
     default_transform: str = "linear",
-    color_white_percentile: float = 99.5,
+    color_white_percentile: float = 99.8,
 ) -> LuminosityDepthResult:
     """Compute and optionally export the pre-transform luminosity depth signal."""
     source = Path(nebula_fits_path)
+    normalization_reference = (
+        Path(normalization_reference_path)
+        if normalization_reference_path is not None
+        else source
+    )
+    normalization_factor, normalization_input_scale = calculate_normalization_factor(
+        normalization_reference,
+        white_percentile=color_white_percentile,
+        input_scale=normalization_reference_input_scale,
+    )
     _, color_rgb, luminance = load_nebula_layer(
         source,
         white_percentile=color_white_percentile,
+        normalization_factor=normalization_factor,
     )
     background, nebula_mask, background_subtracted = fit_background(
         luminance,
@@ -194,6 +247,9 @@ def luminosity2depth(
     )
     result = LuminosityDepthResult(
         source_path=source,
+        normalization_reference_path=normalization_reference,
+        normalization_factor=normalization_factor,
+        normalization_input_scale=normalization_input_scale,
         color_rgb=color_rgb,
         luminance=luminance,
         normalized_luminance=luminance,
@@ -229,6 +285,9 @@ def luminosity2depth(
             "depth_nebula_parsec": nebula_thickness_pc,
             "default_transform": default_transform,
             "color_white_percentile": color_white_percentile,
+            "color_normalization_factor": round(normalization_factor, 8),
+            "normalization_input_scale": normalization_input_scale,
+            "normalization_reference_fits": str(normalization_reference),
             "smooth_sigma": smoothing_sigma,
             "source_nebula_fits": str(source),
             "signal_histogram": {

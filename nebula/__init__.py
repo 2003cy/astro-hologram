@@ -1,6 +1,7 @@
 from .luminosity2depth import (
     BackgroundModel,
     LuminosityDepthResult,
+    calculate_normalization_factor,
     calculate_depth_scale,
     depth_transforms,
     fit_background,
@@ -11,6 +12,7 @@ from .luminosity2depth import (
 __all__ = [
     "BackgroundModel",
     "LuminosityDepthResult",
+    "calculate_normalization_factor",
     "load_nebula_layer",
     "fit_background",
     "calculate_depth_scale",
