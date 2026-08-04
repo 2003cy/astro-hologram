@@ -29,6 +29,56 @@
         justify-items: center;
         gap: 22px;
         text-align: center;
+        width: min(440px, calc(100vw - 40px));
+      }
+      .home-title {
+        color: #f3f7ff;
+        font-size: clamp(24px, 5vw, 36px);
+        font-weight: 480;
+        letter-spacing: 0.08em;
+      }
+      .scene-picker {
+        display: grid;
+        gap: 10px;
+        width: 100%;
+      }
+      .scene-picker-label {
+        color: rgba(220,234,255,0.68);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      #scene-options {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+      }
+      .scene-option {
+        min-width: 112px;
+        padding: 9px 16px;
+        border: 1px solid rgba(183,216,255,0.2);
+        border-radius: 999px;
+        background: rgba(116,164,219,0.07);
+        color: rgba(231,242,255,0.72);
+        font: 12px/1.4 "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+      }
+      .scene-option:hover {
+        border-color: rgba(183,216,255,0.42);
+        color: #f3f8ff;
+      }
+      .scene-option.active {
+        border-color: rgba(183,216,255,0.72);
+        background: rgba(116,164,219,0.22);
+        color: #fff;
+      }
+      #scene-picker-status {
+        min-height: 17px;
+        color: rgba(220,234,255,0.48);
+        font-size: 11px;
       }
       #btn-enter-scene {
         padding: 11px 24px;
@@ -421,7 +471,13 @@
   <body>
     <main id="home-screen">
       <div class="home-content">
-        <button id="btn-enter-scene" type="button">Enter 3D Scene</button>
+        <h1 class="home-title">Astro Hologram</h1>
+        <div class="scene-picker" aria-label="Scene selection">
+          <div class="scene-picker-label">Select a scene</div>
+          <div id="scene-options" role="listbox" aria-label="Available scenes"></div>
+          <p id="scene-picker-status">Finding available scenes…</p>
+        </div>
+        <button id="btn-enter-scene" type="button" disabled>Enter 3D Scene</button>
       </div>
     </main>
 
@@ -537,6 +593,16 @@
             <button class="ctrl-btn" data-nebula-transform="log">log</button>
             <button class="ctrl-btn" data-nebula-transform="power2">power²</button>
             <button class="ctrl-btn" data-nebula-transform="threshold">threshold</button>
+          </div>
+          <div class="param-row">
+            <span class="param-label">brightness</span>
+            <input type="range" id="slider-nebula-brightness" min="0" max="3" step="0.05" value="1" />
+            <input type="number" id="val-nebula-brightness" min="0" max="3" step="0.05" value="1" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">opacity</span>
+            <input type="range" id="slider-nebula-opacity" min="0" max="1" step="0.05" value="1" />
+            <input type="number" id="val-nebula-opacity" min="0" max="1" step="0.05" value="1" />
           </div>
           <div class="param-row">
             <span class="param-label">position</span>
@@ -709,6 +775,11 @@
             <span class="param-label">y (rad)</span>
             <input type="range" id="slider-lg-trackball-y" min="-3.142" max="3.142" step="0.01" value="0" />
             <input type="number" id="val-lg-trackball-y" min="-3.142" max="3.142" step="0.01" value="0" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">z (rad)</span>
+            <input type="range" id="slider-lg-trackball-z" min="-3.142" max="3.142" step="0.01" value="0" />
+            <input type="number" id="val-lg-trackball-z" min="-3.142" max="3.142" step="0.01" value="0" />
           </div>
         </div>
       </details>

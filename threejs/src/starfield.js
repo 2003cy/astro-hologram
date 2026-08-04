@@ -147,19 +147,19 @@ export async function buildStarfield(jsonUrl, cfg) {
 /**
  * Background nebula plane at z = meta.bg_z_scene (default XY plane, faces camera).
  */
-export async function buildNebula(nebulaUrl, meta, sceneWidth) {
+export async function buildNebula(nebulaUrl, meta, sceneWidth, sceneHeight) {
   const texture = await new Promise((resolve, reject) => {
     new THREE.TextureLoader().load(nebulaUrl, resolve, undefined, reject);
   });
   texture.colorSpace = THREE.SRGBColorSpace;
 
-  const geo = new THREE.PlaneGeometry(sceneWidth, sceneWidth);
+  const geo = new THREE.PlaneGeometry(sceneWidth, sceneHeight);
   const mat = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    opacity: 0.6,
+    opacity: 1.0,
   });
 
   const mesh = new THREE.Mesh(geo, mat);
@@ -175,7 +175,7 @@ export async function buildNebula(nebulaUrl, meta, sceneWidth) {
  * applies the selected visual transform to that signal at render time.
  */
 export async function buildNebulaRGBD(colorUrl, signalUrl, meta, sceneWidth,
-                                       depthScale = 1) {
+                                       sceneHeight, depthScale = 1) {
   const loader = new THREE.TextureLoader();
   const [colorTex, depthTex] = await Promise.all([
     new Promise((res, rej) => loader.load(colorUrl, res, undefined, rej)),
@@ -189,7 +189,19 @@ export async function buildNebulaRGBD(colorUrl, signalUrl, meta, sceneWidth,
   depthTex.minFilter     = THREE.LinearFilter;
   depthTex.generateMipmaps = false;
 
-  const geo = new THREE.PlaneGeometry(sceneWidth, sceneWidth, 512, 512);
+  const maxSegments = 512;
+  const segmentsX = sceneWidth >= sceneHeight
+    ? maxSegments
+    : Math.max(1, Math.round(maxSegments * sceneWidth / sceneHeight));
+  const segmentsY = sceneHeight >= sceneWidth
+    ? maxSegments
+    : Math.max(1, Math.round(maxSegments * sceneHeight / sceneWidth));
+  const geo = new THREE.PlaneGeometry(
+    sceneWidth,
+    sceneHeight,
+    segmentsX,
+    segmentsY,
+  );
 
   const mat = new THREE.ShaderMaterial({
     uniforms: {
@@ -199,8 +211,8 @@ export async function buildNebulaRGBD(colorUrl, signalUrl, meta, sceneWidth,
       uDepthCenter:{ value: 0 },
       uZCenter:    { value: meta.bg_z_scene ?? 0 },
       uTransform:  { value: 3 },
-      uOpacity:    { value: 0.6 },
-      uBrightness: { value: 1.5 }, // compensates geometric dimming from vertex displacement
+      uOpacity:    { value: 1.0 },
+      uBrightness: { value: 1.0 },
     },
     vertexShader: /* glsl */`
       uniform sampler2D uSignalMap;
@@ -237,6 +249,8 @@ export async function buildNebulaRGBD(colorUrl, signalUrl, meta, sceneWidth,
       void main() {
         vec4 c = texture2D(uColorMap, vUv);
         gl_FragColor = vec4(c.rgb * uBrightness, uOpacity);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }
     `,
     transparent: true,

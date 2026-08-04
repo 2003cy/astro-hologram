@@ -31,6 +31,8 @@ DEFAULT_SCENE_CONFIG = {
     "depth_coeff": 0.1,
     "no_parallax_dist_factor": 1.2,
     "nebula_transform": "linear",
+    "nebula_brightness": 1.0,
+    "nebula_opacity": 1.0,
     "star_size_scale": 0.4,
     "small_star_protection": True,
     "min_star_core_px": 0.9,

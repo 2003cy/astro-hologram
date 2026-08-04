@@ -23,14 +23,88 @@ const INITIAL_LG_CONFIG = Object.freeze({
 });
 let lookingGlass = null;
 let lgConfig = null;
+let lgTrackballZ = 0;
+let lgRollReference = null;
 
 const homeScreen = document.getElementById("home-screen");
 const sceneScreen = document.getElementById("scene-screen");
 const enterSceneButton = document.getElementById("btn-enter-scene");
 const exitSceneButton = document.getElementById("btn-exit-scene");
+const sceneOptions = document.getElementById("scene-options");
+const scenePickerStatus = document.getElementById("scene-picker-status");
 let sceneActive = false;
 let sceneInitialized = false;
 let sceneInitPromise = null;
+let sceneChoicesPromise = null;
+let availableScenes = [];
+let selectedSceneId = null;
+let activeSceneId = null;
+
+const APP_ROOT = new URL(import.meta.env.BASE_URL, window.location.href);
+
+function appUrl(relativePath) {
+  return new URL(relativePath, APP_ROOT).href;
+}
+
+function sceneBaseUrl(sceneId) {
+  return appUrl(`scenes/${encodeURIComponent(sceneId)}/`);
+}
+
+function selectScene(sceneId, updateUrl = true) {
+  const selected = availableScenes.find(scene => scene.id === sceneId);
+  if (!selected) return;
+  selectedSceneId = selected.id;
+  for (const button of sceneOptions.querySelectorAll(".scene-option")) {
+    const active = button.dataset.sceneId === selectedSceneId;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  }
+  scenePickerStatus.textContent = `${selected.name} selected`;
+  enterSceneButton.disabled = false;
+
+  if (updateUrl) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("scene", selectedSceneId);
+    url.searchParams.delete("enter");
+    window.history.replaceState(null, "", url);
+  }
+}
+
+async function loadSceneChoices() {
+  try {
+    const response = await fetch(appUrl("scenes/manifest.json"), { cache: "no-store" });
+    if (!response.ok) throw new Error(`Scene manifest returned ${response.status}`);
+    const manifest = await response.json();
+    availableScenes = Array.isArray(manifest.scenes) ? manifest.scenes : [];
+    sceneOptions.replaceChildren();
+
+    for (const scene of availableScenes) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "scene-option";
+      button.dataset.sceneId = scene.id;
+      button.setAttribute("role", "option");
+      button.setAttribute("aria-selected", "false");
+      button.textContent = scene.name;
+      button.addEventListener("click", () => selectScene(scene.id));
+      sceneOptions.appendChild(button);
+    }
+
+    if (!availableScenes.length) {
+      scenePickerStatus.textContent = "No complete scene exports were found";
+      return;
+    }
+    const requestedScene = new URL(window.location.href).searchParams.get("scene");
+    const initialScene = availableScenes.some(scene => scene.id === requestedScene)
+      ? requestedScene
+      : availableScenes[0].id;
+    selectScene(initialScene, false);
+  } catch (error) {
+    console.error(error);
+    scenePickerStatus.textContent = "Could not load the scene list";
+    enterSceneButton.disabled = true;
+  }
+}
 
 // WebGL and Looking Glass are initialized on first entry, leaving the home
 // screen lightweight and avoiding an early navigator.xr override.
@@ -193,6 +267,9 @@ const CAMERA_TARGET = new THREE.Vector3(0, 0, 0);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
+const astronomyRoot = new THREE.Group();
+astronomyRoot.name = "astronomy-root";
+scene.add(astronomyRoot);
 let gridController = null;
 
 const camera = new THREE.PerspectiveCamera(
@@ -223,8 +300,59 @@ const initialCameraState = {
 // the same interactive view without reloading the page.
 let desktopCameraState = null;
 
+function restoreAstronomyRoot() {
+  astronomyRoot.position.set(0, 0, 0);
+  astronomyRoot.quaternion.identity();
+  astronomyRoot.updateMatrixWorld(true);
+}
+
+function captureLgRollReference() {
+  if (!lgConfig) return null;
+  const yRotation = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 1, 0),
+    lgConfig.trackballX,
+  );
+  const xRotation = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(1, 0, 0),
+    -lgConfig.trackballY,
+  );
+  return {
+    opticalAxis: new THREE.Vector3(0, 0, 1)
+      .applyQuaternion(yRotation.multiply(xRotation))
+      .normalize(),
+    pivot: new THREE.Vector3(
+      lgConfig.targetX,
+      lgConfig.targetY,
+      lgConfig.targetZ,
+    ),
+  };
+}
+
+function applyLgSceneRoll() {
+  if (!renderer?.xr.isPresenting || !lgConfig || lgTrackballZ === 0) {
+    restoreAstronomyRoot();
+    return;
+  }
+
+  // Freeze the roll axis and pivot when the LKG session starts. Following the
+  // live X/Y trackball here would rotate the scene again during every mouse
+  // drag and couple the official controls back into this custom scene roll.
+  lgRollReference ??= captureLgRollReference();
+  const sceneRotation = new THREE.Quaternion().setFromAxisAngle(
+    lgRollReference.opticalAxis,
+    -lgTrackballZ,
+  );
+
+  astronomyRoot.quaternion.copy(sceneRotation);
+  astronomyRoot.position.copy(lgRollReference.pivot).sub(
+    lgRollReference.pivot.clone().applyQuaternion(sceneRotation),
+  );
+  astronomyRoot.updateMatrixWorld(true);
+}
+
 function handleXRSessionStart() {
   lkgCameraGrid?.setXrPresenting(true);
+  lgRollReference = lgTrackballZ !== 0 ? captureLgRollReference() : null;
   desktopCameraState = {
     position: camera.position.clone(),
     quaternion: camera.quaternion.clone(),
@@ -234,9 +362,12 @@ function handleXRSessionStart() {
     near: camera.near,
     far: camera.far,
   };
+  applyLgSceneRoll();
 }
 
 function handleXRSessionEnd() {
+  restoreAstronomyRoot();
+  lgRollReference = null;
   lkgCameraGrid?.setXrPresenting(false);
   if (desktopCameraState) {
     camera.position.copy(desktopCameraState.position);
@@ -348,7 +479,7 @@ async function initializeRuntime() {
 }
 
 // --- Load assets ---
-const BASE = "/";
+let BASE = null;
 
 const NEBULA_TRANSFORMS = {
   linear: 0, sqrt: 1, cbrt: 2, log: 3, power2: 4, threshold: 5,
@@ -399,6 +530,8 @@ async function init() {
     small_star_protection: true,
     min_star_core_px: 0.9,
     nebula_transform: "linear",
+    nebula_brightness: 1.0,
+    nebula_opacity: 1.0,
     grid_line_width: 1.55, grid_brightness: 1, grid_angular_density: 10,
     grid_distance_shells: 7, grid_labels: true, grid_sightlines: true,
   };
@@ -423,17 +556,18 @@ async function init() {
     updateSmallStarProtection,
   } =
     await buildStarfield(BASE + "stars.json", cfg);
-  scene.add(starGroup);
+  astronomyRoot.add(starGroup);
 
   const grid = buildAdaptiveGrid(cfg, rawStars, meta, gridLabelLayer);
   gridController = grid;
-  scene.add(grid.group);
+  astronomyRoot.add(grid.group);
   lkgCameraGrid = buildLkgCameraGrid(lgConfig, camera, lkgCameraLabelLayer);
   lkgCameraGrid.setResolution(window.innerWidth, window.innerHeight);
   scene.add(lkgCameraGrid.group);
   if (!grid.supported) console.warn("RA/Dec grid disabled: TAN WCS metadata is unavailable.");
 
-  const sceneWidth = 3000;
+  const sceneWidth = meta.img_w ?? cfg.img_w ?? 3000;
+  const sceneHeight = meta.img_h ?? cfg.img_h ?? sceneWidth;
 
   let nebMeta = { nebula_depth_scale: 1, nebula_z_center: 0, default_transform: "log" };
   try {
@@ -443,19 +577,25 @@ async function init() {
     console.warn("nebula_meta.json not found, using defaults:", nebMeta);
   }
 
-  const nebula = await buildNebula(BASE + "nebula.png", meta, sceneWidth);
+  const nebula = await buildNebula(
+    BASE + "nebula.png",
+    meta,
+    sceneWidth,
+    sceneHeight,
+  );
   nebula.position.z = nebMeta.nebula_z_center;
-  scene.add(nebula);
+  astronomyRoot.add(nebula);
 
   const nebulaRGBD = await buildNebulaRGBD(
     BASE + "nebula.png",
     BASE + "nebula_signal.png",
     meta,
     sceneWidth,
+    sceneHeight,
     nebMeta.nebula_depth_scale,
   );
   nebulaRGBD.visible = false;
-  scene.add(nebulaRGBD);
+  astronomyRoot.add(nebulaRGBD);
 
   if (!cfg.nebula_transform) cfg.nebula_transform = nebMeta.default_transform ?? "log";
 
@@ -466,6 +606,16 @@ async function init() {
     nebulaRGBD.material.uniforms.uDepthCenter.value = transformedSignalCenter(nebMeta, name);
   }
   applyNebulaTransform();
+
+  function applyNebulaAppearance() {
+    const brightness = Math.max(0, Number(cfg.nebula_brightness) || 0);
+    const opacity = THREE.MathUtils.clamp(Number(cfg.nebula_opacity) || 0, 0, 1);
+    nebula.material.color.setScalar(brightness);
+    nebula.material.opacity = opacity;
+    nebulaRGBD.material.uniforms.uBrightness.value = brightness;
+    nebulaRGBD.material.uniforms.uOpacity.value = opacity;
+  }
+  applyNebulaAppearance();
 
   // Applies nebula_pos_shift and scene_shift together.
   // scene_shift also moves the star group so all objects shift in unison.
@@ -550,6 +700,10 @@ async function init() {
   const valNoPar          = document.getElementById("val-no-par");
   const sliderNebulaShift = document.getElementById("slider-nebula-shift");
   const valNebulaShift    = document.getElementById("val-nebula-shift");
+  const sliderNebulaBrightness = document.getElementById("slider-nebula-brightness");
+  const valNebulaBrightness    = document.getElementById("val-nebula-brightness");
+  const sliderNebulaOpacity    = document.getElementById("slider-nebula-opacity");
+  const valNebulaOpacity       = document.getElementById("val-nebula-opacity");
   const sliderSceneShift  = document.getElementById("slider-scene-shift");
   const valSceneShift     = document.getElementById("val-scene-shift");
   const btnReset          = document.getElementById("btn-reset");
@@ -590,6 +744,8 @@ async function init() {
   const btnResetCameraLens = document.getElementById("btn-reset-camera-lens");
   const btnResetLgView = document.getElementById("btn-reset-lg-view");
   const btnResetLgTrackball = document.getElementById("btn-reset-lg-trackball");
+  const sliderLgTrackballZ = document.getElementById("slider-lg-trackball-z");
+  const valLgTrackballZ = document.getElementById("val-lg-trackball-z");
   const lgFields = {
     targetX: [document.getElementById("slider-lg-target-x"), document.getElementById("val-lg-target-x")],
     targetY: [document.getElementById("slider-lg-target-y"), document.getElementById("val-lg-target-y")],
@@ -632,6 +788,8 @@ async function init() {
       slider.value = value;
       input.value = Number.isInteger(value) ? value : Number(value.toFixed(3));
     }
+    sliderLgTrackballZ.value = lgTrackballZ;
+    valLgTrackballZ.value = Number(lgTrackballZ.toFixed(3));
   }
 
   // Looking Glass' built-in mouse/keyboard controls update the shared config
@@ -648,6 +806,8 @@ async function init() {
 
   function resetLgView() {
     lookingGlass.update({ ...INITIAL_LG_CONFIG });
+    lgTrackballZ = 0;
+    applyLgSceneRoll();
     syncLgUI();
   }
 
@@ -656,6 +816,25 @@ async function init() {
       trackballX: INITIAL_LG_CONFIG.trackballX,
       trackballY: INITIAL_LG_CONFIG.trackballY,
     });
+    lgTrackballZ = 0;
+    applyLgSceneRoll();
+    syncLgUI();
+  }
+
+  function updateLgTrackballZ(value) {
+    if (!Number.isFinite(value)) return syncLgUI();
+    const nextValue = THREE.MathUtils.clamp(
+      value,
+      Number(sliderLgTrackballZ.min),
+      Number(sliderLgTrackballZ.max),
+    );
+    if (lgTrackballZ === 0 && nextValue !== 0) {
+      lgRollReference = captureLgRollReference();
+    } else if (nextValue === 0) {
+      lgRollReference = null;
+    }
+    lgTrackballZ = nextValue;
+    applyLgSceneRoll();
     syncLgUI();
   }
 
@@ -807,6 +986,13 @@ async function init() {
   btnResetCameraTarget.addEventListener("click", resetCameraTarget);
   btnResetCameraLens.addEventListener("click", resetCameraLens);
   for (const name of Object.keys(lgFields)) bindLgField(name);
+  sliderLgTrackballZ.addEventListener("input", () => {
+    updateLgTrackballZ(Number(sliderLgTrackballZ.value));
+  });
+  valLgTrackballZ.addEventListener("change", () => {
+    updateLgTrackballZ(Number(valLgTrackballZ.value));
+  });
+  sliderLgTrackballZ.addEventListener("dblclick", () => updateLgTrackballZ(0));
   btnResetLgView.addEventListener("click", resetLgView);
   btnResetLgTrackball.addEventListener("click", resetLgTrackball);
   controls.addEventListener("change", syncCameraUI);
@@ -842,6 +1028,10 @@ async function init() {
 
     sliderNebulaShift.value = cfg.nebula_pos_shift;
     valNebulaShift.value = cfg.nebula_pos_shift;
+    sliderNebulaBrightness.value = cfg.nebula_brightness;
+    valNebulaBrightness.value = Number(cfg.nebula_brightness).toFixed(2);
+    sliderNebulaOpacity.value = cfg.nebula_opacity;
+    valNebulaOpacity.value = Number(cfg.nebula_opacity).toFixed(2);
 
     sliderSceneShift.value = cfg.scene_shift;
     valSceneShift.value = cfg.scene_shift;
@@ -918,6 +1108,8 @@ async function init() {
   sliderStarSize.addEventListener("dblclick",  () => { cfg.star_size_scale         = savedCfg.star_size_scale;         syncUIFromCfg(); setStarSizeScale(cfg.star_size_scale); });
   sliderMinStarCore.addEventListener("dblclick", () => { cfg.min_star_core_px = savedCfg.min_star_core_px; syncUIFromCfg(); updateSmallStarProtection(cfg.small_star_protection, cfg.min_star_core_px); });
   sliderNebulaShift.addEventListener("dblclick", () => { cfg.nebula_pos_shift = savedCfg.nebula_pos_shift ?? 0; syncUIFromCfg(); applyShifts(); });
+  sliderNebulaBrightness.addEventListener("dblclick", () => { cfg.nebula_brightness = savedCfg.nebula_brightness ?? 1; syncUIFromCfg(); applyNebulaAppearance(); });
+  sliderNebulaOpacity.addEventListener("dblclick", () => { cfg.nebula_opacity = savedCfg.nebula_opacity ?? 1; syncUIFromCfg(); applyNebulaAppearance(); });
   sliderSceneShift.addEventListener("dblclick",  () => { cfg.scene_shift      = savedCfg.scene_shift      ?? 0; syncUIFromCfg(); applyShifts(); });
 
   sliderBgDist.addEventListener("input", () => {
@@ -998,6 +1190,37 @@ async function init() {
     if (!isNaN(v)) { cfg.nebula_pos_shift = v; sliderNebulaShift.value = v; applyShifts(); }
   });
 
+  sliderNebulaBrightness.addEventListener("input", () => {
+    cfg.nebula_brightness = Number(sliderNebulaBrightness.value);
+    valNebulaBrightness.value = cfg.nebula_brightness.toFixed(2);
+    applyNebulaAppearance();
+  });
+  valNebulaBrightness.addEventListener("change", () => {
+    const value = Number(valNebulaBrightness.value);
+    if (Number.isFinite(value) && value >= 0 && value <= 3) {
+      cfg.nebula_brightness = value;
+      sliderNebulaBrightness.value = value;
+      applyNebulaAppearance();
+    } else {
+      syncUIFromCfg();
+    }
+  });
+  sliderNebulaOpacity.addEventListener("input", () => {
+    cfg.nebula_opacity = Number(sliderNebulaOpacity.value);
+    valNebulaOpacity.value = cfg.nebula_opacity.toFixed(2);
+    applyNebulaAppearance();
+  });
+  valNebulaOpacity.addEventListener("change", () => {
+    const value = Number(valNebulaOpacity.value);
+    if (Number.isFinite(value) && value >= 0 && value <= 1) {
+      cfg.nebula_opacity = value;
+      sliderNebulaOpacity.value = value;
+      applyNebulaAppearance();
+    } else {
+      syncUIFromCfg();
+    }
+  });
+
   sliderSceneShift.addEventListener("input", () => {
     cfg.scene_shift = parseFloat(sliderSceneShift.value);
     valSceneShift.value = cfg.scene_shift;
@@ -1045,6 +1268,7 @@ async function init() {
     syncUIFromCfg();
     onCfgChanged();
     applyNebulaTransform();
+    applyNebulaAppearance();
     applyShifts();
     resetCamera();
     resetLgView();
@@ -1062,6 +1286,22 @@ async function init() {
 
 async function enterScene() {
   enterSceneButton.disabled = true;
+  await sceneChoicesPromise;
+  if (!selectedSceneId) return;
+
+  // Scene objects and their UI listeners are initialized once per document.
+  // Reload only when the user explicitly chooses a different data set; normal
+  // Exit Scene remains instant and does not refresh the page.
+  if (sceneInitialized && activeSceneId !== selectedSceneId) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("scene", selectedSceneId);
+    url.searchParams.set("enter", "1");
+    window.location.assign(url);
+    return;
+  }
+
+  BASE = sceneBaseUrl(selectedSceneId);
+  activeSceneId = selectedSceneId;
   enterSceneButton.textContent = sceneInitialized ? "Entering…" : "Loading scene…";
 
   try {
@@ -1074,6 +1314,7 @@ async function enterScene() {
     sceneInitPromise = null;
     enterSceneButton.textContent = "Failed — retry";
     enterSceneButton.disabled = false;
+    scenePickerStatus.textContent = `Could not load ${selectedSceneId}`;
     return;
   }
 
@@ -1092,6 +1333,8 @@ async function enterScene() {
 
 async function exitScene() {
   sceneActive = false;
+  restoreAstronomyRoot();
+  lgRollReference = null;
   setControlPanelOpen(false);
   starInteraction?.clear();
 
@@ -1113,6 +1356,15 @@ async function exitScene() {
 
 enterSceneButton.addEventListener("click", enterScene);
 exitSceneButton.addEventListener("click", exitScene);
+
+sceneChoicesPromise = loadSceneChoices();
+sceneChoicesPromise.then(() => {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get("enter") !== "1" || !selectedSceneId) return;
+  url.searchParams.delete("enter");
+  window.history.replaceState(null, "", url);
+  enterScene();
+});
 
 // --- Zoom-compensation state ---
 // --- Resize handler ---

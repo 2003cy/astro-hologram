@@ -55,13 +55,21 @@ def depth_transforms() -> dict[str, Callable[[np.ndarray], np.ndarray]]:
     }
 
 
-def load_nebula_layer(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return raw FITS data, normalized RGB, and normalized Rec.709 luminance."""
+def load_nebula_layer(
+    path: str | Path,
+    *,
+    white_percentile: float = 99.5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return raw FITS data, robustly normalized RGB, and Rec.709 luminance."""
+    if not 0 < white_percentile <= 100:
+        raise ValueError("white_percentile must be in the interval (0, 100]")
     source = Path(path)
     with fits.open(source) as hdul:
         raw = np.asarray(hdul[0].data, dtype=np.float32)
     raw = np.clip(raw, 0.0, None)
-    scale = float(raw.max()) + 1e-9
+    # One shared white point preserves the RGB channel ratios. A percentile
+    # avoids letting a tiny number of hot pixels dim the complete nebula.
+    scale = float(np.percentile(raw, white_percentile)) + 1e-9
 
     if raw.ndim == 3:
         normalized_channels = raw / scale
@@ -155,10 +163,14 @@ def luminosity2depth(
     smoothing_sigma: float = 6.0,
     signal_histogram_bins: int = 256,
     default_transform: str = "linear",
+    color_white_percentile: float = 99.5,
 ) -> LuminosityDepthResult:
     """Compute and optionally export the pre-transform luminosity depth signal."""
     source = Path(nebula_fits_path)
-    _, color_rgb, luminance = load_nebula_layer(source)
+    _, color_rgb, luminance = load_nebula_layer(
+        source,
+        white_percentile=color_white_percentile,
+    )
     background, nebula_mask, background_subtracted = fit_background(
         luminance,
         threshold_sigma=detection_threshold_sigma,
@@ -216,6 +228,7 @@ def luminosity2depth(
             "nebula_dist_pc": nebula_distance_pc,
             "depth_nebula_parsec": nebula_thickness_pc,
             "default_transform": default_transform,
+            "color_white_percentile": color_white_percentile,
             "smooth_sigma": smoothing_sigma,
             "source_nebula_fits": str(source),
             "signal_histogram": {
