@@ -469,6 +469,7 @@ async function initializeRuntime() {
   vrBtn.style.left = "12px";
   vrBtn.style.bottom = "";
   vrBtn.style.right = "";
+  vrBtn.hidden = true;
   sceneScreen.appendChild(vrBtn);
   new MutationObserver(labelLookingGlassButton).observe(vrBtn, {
     childList: true,
@@ -634,12 +635,21 @@ async function init() {
   let showStars = true;
   let showGrid  = false;
   let showLkgCameraGrid = false;
+  let showLkgActions = false;
 
   const btnStars    = document.getElementById("btn-stars");
   const btnNebula3d = document.getElementById("btn-nebula3d");
   const btnGrid      = document.getElementById("btn-grid");
   const btnLkgCamGrid = document.getElementById("btn-lkg-cam-grid");
+  const btnShowLkgActions = document.getElementById("btn-show-lkg-actions");
   const btnStarSelection = document.getElementById("btn-star-selection");
+
+  function applyLkgActionVisibility() {
+    vrBtn.hidden = !showLkgActions;
+    btnLkgCamGrid.hidden = !showLkgActions;
+    btnShowLkgActions.classList.toggle("active", showLkgActions);
+    btnShowLkgActions.setAttribute("aria-pressed", String(showLkgActions));
+  }
 
   starInteraction = createStarInteraction({
     layer: document.getElementById("star-interaction-layer"),
@@ -670,6 +680,10 @@ async function init() {
   btnStars.addEventListener("click",    () => { showStars = !showStars; applyVisibility(); });
   btnNebula3d.addEventListener("click", () => { rgbdMode  = !rgbdMode;  applyVisibility(); });
   btnGrid.addEventListener("click",     () => { showGrid  = !showGrid;   applyVisibility(); });
+  btnShowLkgActions.addEventListener("click", () => {
+    showLkgActions = !showLkgActions;
+    applyLkgActionVisibility();
+  });
   btnLkgCamGrid.addEventListener("click", () => {
     showLkgCameraGrid = !showLkgCameraGrid;
     controls.maxDistance = showLkgCameraGrid
@@ -1278,6 +1292,7 @@ async function init() {
   applyStarVisibilityFilter();
   syncCameraUI();
   syncLgUI();
+  applyLkgActionVisibility();
   applyVisibility();
 
   console.log(`Loaded ${sprites.length} stars`);

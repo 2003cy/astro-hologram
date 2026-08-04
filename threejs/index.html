@@ -496,7 +496,7 @@
     </div>
     <div id="info">
       Drag to orbit &nbsp;|&nbsp; Scroll to zoom<br/>
-      Click VR to open Looking Glass
+      Looking Glass actions are under Scene Controls
     </div>
 
     <!-- Scene toggles -->
@@ -504,7 +504,7 @@
       <button class="ctrl-btn active" id="btn-stars">Stars</button>
       <button class="ctrl-btn active" id="btn-nebula3d">3D Nebula</button>
       <button class="ctrl-btn" id="btn-grid">RA/Dec Grid</button>
-      <button class="ctrl-btn" id="btn-lkg-cam-grid">LKG Cam Grid</button>
+      <button class="ctrl-btn" id="btn-lkg-cam-grid" hidden>LKG Cam Grid</button>
     </div>
 
     <button id="menu-toggle" type="button" aria-label="Open scene controls"
@@ -724,6 +724,12 @@
       <details class="control-section">
         <summary>Looking Glass View</summary>
         <div class="section-content">
+          <div class="panel-title">Scene Buttons</div>
+          <div class="transform-row">
+            <button class="ctrl-btn" id="btn-show-lkg-actions"
+                    type="button" aria-pressed="false">Show LKG Buttons</button>
+          </div>
+
           <div class="panel-title-row">
             <div class="panel-title">View Target</div>
             <button class="camera-reset" id="btn-reset-lg-view" title="Reset Looking Glass view" aria-label="Reset Looking Glass view">↺</button>
