@@ -270,6 +270,9 @@ scene.background = new THREE.Color(0x000000);
 const astronomyRoot = new THREE.Group();
 astronomyRoot.name = "astronomy-root";
 scene.add(astronomyRoot);
+const sceneContentRoot = new THREE.Group();
+sceneContentRoot.name = "scene-content-root";
+astronomyRoot.add(sceneContentRoot);
 let gridController = null;
 
 const camera = new THREE.PerspectiveCamera(
@@ -533,7 +536,7 @@ async function init() {
     nebula_transform: "linear",
     nebula_brightness: 1.0,
     nebula_opacity: 1.0,
-    camera_roll_deg: 0,
+    scene_rotation_deg: 0,
     grid_line_width: 1.55, grid_brightness: 1, grid_angular_density: 10,
     grid_distance_shells: 7, grid_labels: true, grid_sightlines: true,
   };
@@ -548,6 +551,8 @@ async function init() {
   baseCfg = { ...defaultCfg, ...baseCfg };
 
   const cfg = { ...baseCfg };
+  sceneContentRoot.rotation.z = THREE.MathUtils.degToRad(cfg.scene_rotation_deg);
+  sceneContentRoot.updateMatrixWorld(true);
 
   const {
     group: starGroup,
@@ -558,11 +563,11 @@ async function init() {
     updateSmallStarProtection,
   } =
     await buildStarfield(BASE + "stars.json", cfg);
-  astronomyRoot.add(starGroup);
+  sceneContentRoot.add(starGroup);
 
   const grid = buildAdaptiveGrid(cfg, rawStars, meta, gridLabelLayer);
   gridController = grid;
-  astronomyRoot.add(grid.group);
+  sceneContentRoot.add(grid.group);
   lkgCameraGrid = buildLkgCameraGrid(lgConfig, camera, lkgCameraLabelLayer);
   lkgCameraGrid.setResolution(window.innerWidth, window.innerHeight);
   scene.add(lkgCameraGrid.group);
@@ -586,7 +591,7 @@ async function init() {
     sceneHeight,
   );
   nebula.position.z = nebMeta.nebula_z_center;
-  astronomyRoot.add(nebula);
+  sceneContentRoot.add(nebula);
 
   const nebulaRGBD = await buildNebulaRGBD(
     BASE + "nebula.png",
@@ -597,7 +602,7 @@ async function init() {
     nebMeta.nebula_depth_scale,
   );
   nebulaRGBD.visible = false;
-  astronomyRoot.add(nebulaRGBD);
+  sceneContentRoot.add(nebulaRGBD);
 
   if (!cfg.nebula_transform) cfg.nebula_transform = nebMeta.default_transform ?? "log";
 
@@ -742,20 +747,16 @@ async function init() {
     targetZ: [document.getElementById("slider-target-z"), document.getElementById("val-target-z")],
     fov: [document.getElementById("slider-camera-fov"), document.getElementById("val-camera-fov")],
   };
-  const configuredCameraRoll = Number(cfg.camera_roll_deg);
   const cameraDefaults = {
     x: initialCameraState.position.x,
     y: initialCameraState.position.y,
     z: initialCameraState.position.z,
-    roll: Number.isFinite(configuredCameraRoll)
-      ? THREE.MathUtils.clamp(configuredCameraRoll, -180, 180)
-      : 0,
+    roll: 0,
     targetX: initialCameraState.target.x,
     targetY: initialCameraState.target.y,
     targetZ: initialCameraState.target.z,
     fov: initialCameraState.fov,
   };
-  cameraRollDeg = cameraDefaults.roll;
   const btnResetCameraPosition = document.getElementById("btn-reset-camera-position");
   const btnResetCameraRotation = document.getElementById("btn-reset-camera-rotation");
   const btnCameraNorth = document.getElementById("btn-camera-north");
@@ -883,7 +884,7 @@ async function init() {
       camera.fov = state.fov;
       controls.target.copy(state.target);
     }
-    cameraRollDeg = cameraDefaults.roll;
+    cameraRollDeg = 0;
     if (!renderer.xr.isPresenting) {
       camera.updateProjectionMatrix();
       controls.update();
@@ -900,7 +901,7 @@ async function init() {
   }
 
   function resetCameraRotation() {
-    cameraRollDeg = cameraDefaults.roll;
+    cameraRollDeg = 0;
     syncCameraUI();
   }
 

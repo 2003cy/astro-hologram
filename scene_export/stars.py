@@ -33,7 +33,7 @@ DEFAULT_SCENE_CONFIG = {
     "nebula_transform": "linear",
     "nebula_brightness": 1.0,
     "nebula_opacity": 1.0,
-    "camera_roll_deg": 0.0,
+    "scene_rotation_deg": 0.0,
     "star_size_scale": 0.4,
     "small_star_protection": True,
     "min_star_core_px": 0.9,
