@@ -3,9 +3,12 @@
 .env.*
 !.env.example
 
-# Project data
-/data/*
-!/data/test.PNG
+# Project data: publish only the browser-ready demo scene.
+/data/**
+!/data/demo01/
+!/data/demo01/export/
+!/data/demo01/export/**
+
 
 # Pixi environments
 .pixi/
