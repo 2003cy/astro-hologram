@@ -8,6 +8,9 @@
 !/data/demo01/
 !/data/demo01/export/
 !/data/demo01/export/**
+!/data/demo02/
+!/data/demo02/export/
+!/data/demo02/export/**
 
 
 # Pixi environments
